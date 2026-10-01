@@ -962,7 +962,7 @@ async function checkNight($: Dollar, now: number) {
  */
 function fitSide(line: SideLine | null, total: number): { segments: Segment[]; width: number } {
   if (!line) return { segments: [], width: 0 }
-  const caption = widthOf(`${nameOf()} Lv.${levelOf(pet.xp)} · `) + CAP_ROOM
+  const caption = widthOf(`${nameOf()} ${badge()} · `) + CAP_ROOM
   const room = total - sizeOf() - PET_ROOM - SIDE_GAP - widthOf(SIDE_SEP) - caption
   for (const segments of [line.full, line.compact]) {
     const width = segments.reduce((w, seg) => w + widthOf(seg.children), 0)
@@ -1132,7 +1132,9 @@ const captionNow = () => {
   const long = elapsed(now)
   return long ? `${base} · ${long}` : base
 }
-const captionText = () => `${nameOf()} Lv.${levelOf(pet.xp)} · ${captionNow()}`
+/** "Lv.5 Dancer": the level and its title, always beside Clawd's name. */
+const badge = () => `Lv.${levelOf(pet.xp)} ${titleOf(levelOf(pet.xp))}`
+const captionText = () => `${nameOf()} ${badge()} · ${captionNow()}`
 
 const short = (text: string, n = 28) => (text.length > n ? `${text.slice(0, n - 1)}…` : text)
 const base = (path: string) => path.split('/').filter(Boolean).pop() ?? path
@@ -1508,7 +1510,9 @@ export const register: Register = on => {
             <Svg key={`pet-${playing}-${playingAt}`} source={svg(playing, facing < 0)} alt={`${nameOf()}: ${caption}`} width={CW * PX} height={CH * PX} isInteractive />
             <Text>
               <Text bold color="#d97757">{nameOf()}</Text>
-              <Text dimColor> Lv.{levelOf(pet.xp)} · </Text>
+              <Text dimColor> Lv.{levelOf(pet.xp)} </Text>
+              <Text color="#efb154">{titleOf(levelOf(pet.xp))}</Text>
+              <Text dimColor> · </Text>
               <Text color={color}>{caption}</Text>
             </Text>
           </Box>
@@ -1539,7 +1543,9 @@ export const register: Register = on => {
     // Clawd's caption as runs of Text, to sit inside another Text (a fragment there is refused)
     const own = [
       <Text bold color="#d97757">{nameOf()}</Text>,
-      <Text dimColor> Lv.{levelOf(pet.xp)} · </Text>,
+      <Text dimColor> Lv.{levelOf(pet.xp)} </Text>,
+      <Text color="#efb154">{titleOf(levelOf(pet.xp))}</Text>,
+      <Text dimColor> · </Text>,
       <Text color={color}>{caption}</Text>,
     ]
     const readout = (

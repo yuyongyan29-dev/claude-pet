@@ -41,7 +41,7 @@ test('the forecast and Clawd\'s caption share one line; Clawd strolls from its e
   for (const columns of [120, 160]) {
     const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: columns } })
     // one Text holds both: the readout, then Clawd's name, level and what it is doing
-    const line = await ui.find({ type: 'Text', text: /Clear · 19% · 186k\/1M · ▂▂▂ \+34\.4k │ \S+ Lv\.\d+ · / })
+    const line = await ui.find({ type: 'Text', text: /Clear · 19% · 186k\/1M · ▂▂▂ \+34\.4k │ \S+ Lv\.\d+ \w+ · / })
     expect(line).toBeDefined()
     // the band is as wide as the terminal; Clawd's range starts just past the line's end
     // blocks draw a Raster as wide as the band; a picture is an Image in a Box placed at its left

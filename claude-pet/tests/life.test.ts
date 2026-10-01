@@ -53,7 +53,7 @@ const boot = ($: Engine) => $.session.start({ surface: 'terminal', isInteractive
 const pet = ($: Engine, args: string) => $.command.run({ command: 'pet', args } as never)
 const spriteOf = (b: Blit) => b.source?.file?.match(/frames\/([^/]+)\//)?.[1]
 const caption = async (ui: { find: (q: object) => Promise<{ text?: string } | undefined> }) =>
-  (await ui.find({ type: 'Text', text: /Lv\.\d+ · / }))?.text ?? ''
+  (await ui.find({ type: 'Text', text: /Lv\.\d+ \w+ · / }))?.text ?? ''
 /** The left edge of Clawd's picture box on the terminal. */
 const pictureLeft = async (ui: { findAll: (q: object) => Promise<any[]> }) => {
   const box = (await ui.findAll({ type: 'Box' })).find(b => b.props.position === 'absolute' && b.children?.[0]?.type === 'Image')
@@ -266,4 +266,15 @@ test('a level up says what Clawd learned', async ($, on) => {
   await boot($)
   await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
   expect(toasts.join(' ')).toContain('reached Lv.6! Learned spinning till dizzy, confetti.')
+})
+
+test('the title rides beside the name, all the time', async ($, on) => {
+  const { clock } = world(on, { xp: 404 })
+  await boot($)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount(band(160, surface))
+    await clock.advance(300)
+    expect(await caption(ui)).toMatch(/^Clawd Lv\.5 Dancer · /)
+    await ui.unmount()
+  }
 })
