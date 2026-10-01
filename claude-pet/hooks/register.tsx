@@ -16,7 +16,7 @@ import { CLIPS, SPRITES } from './sprites'
  */
 
 type Pet = { food: number; love: number; xp: number; hidden: boolean; savedAt: number; size?: number; name?: string; still?: boolean; merged?: boolean; hd?: boolean; sound?: boolean }
-type Mood = 'think' | 'search' | 'edit' | 'shell' | 'agent' | 'work' | 'idle' | 'sleep' | 'hungry'
+type Mood = 'think' | 'search' | 'edit' | 'shell' | 'agent' | 'work' | 'idle' | 'sleep' | 'hungry' | 'alarm' | 'ask' | 'watch' | 'crowded'
 type Dollar = Parameters<Hook<'turn.complete'>>[0]
 
 const SLEEP_AFTER_MS = 3 * 60_000
@@ -30,7 +30,13 @@ const HOLD_MS = 20_000 // a taller band stays this long after a turn before it s
 const SLEEP_FRAME_MS = 250 // asleep, Clawd breathes at 4 fps
 const DEEP_SLEEP_MS = 10 * 60_000 // after this long with nothing happening, Clawd holds still
 const SAVE_EVERY_MS = 60_000
-
+const NIGHT_SLEEP_AFTER_MS = 45_000 // late at night Clawd nods off much sooner
+const NIGHT_CHECK_MS = 15 * 60_000
+const LONG_TURN_MS = 60_000 // a turn this long shows how long it has run
+const TIRED_MS = 3 * 60_000 // and past this Clawd starts to flag
+const ASK_MS = 60_000 // how long Clawd keeps waving for an answer nobody gave
+const CROWDED = 90 // context window percent where Clawd gets nervous (token-weather's "Compact soon")
+const DESKTOP_CELL_PX = 8 // a desktop cell is about this wide, to size Clawd's picture in cells
 // --- the canvas every frame is placed on: Clawd's 24x16 body with its feet at (AX, AY) ---
 const CW = 48
 const CH = 40
@@ -409,6 +415,10 @@ const CAPTION: Record<Mood, string> = {
   idle: 'strolling',
   sleep: 'meditating…',
   hungry: 'hungry… /pet feed',
+  alarm: '⚠ check that command!',
+  ask: 'waiting for you…',
+  watch: 'watching the replay',
+  crowded: 'context almost full · /compact',
 }
 const CAPTION_COLOR: Record<Mood, string> = {
   think: '#699acb',
@@ -420,6 +430,10 @@ const CAPTION_COLOR: Record<Mood, string> = {
   idle: '#d97757',
   sleep: '#8fb8d8',
   hungry: '#efb154',
+  alarm: '#e06c5a',
+  ask: '#efb154',
+  watch: '#699acb',
+  crowded: '#e06c5a',
 }
 const TOOL_MOOD: Record<string, Mood> = {
   Read: 'search',
@@ -468,13 +482,38 @@ const weighted = (list: [string, number][]) => {
   return list[0]![0]
 }
 
+// --- time: the engine's clock, so a test's mock clock drives Clawd as the real one does ---
+// Date.now() plus the engine clock's offset from it, measured at start. When the two disagree (a
+// test's mock clock) each tick and hook asks the engine again; otherwise that costs nothing.
+let skew = 0
+const clockNow = () => Date.now() + skew
+const isMocked = () => Math.abs(skew) > 1000
+async function syncClock($: Dollar, force = false) {
+  if (!force && !isMocked()) return
+  skew = (await $.clock.now().catch(() => Date.now())) - Date.now()
+}
+
+// --- what the other mods are up to, kept from their state writes as they happen (no reads
+// while drawing): token-weather's line and fill, Blast Radius holding a command, Replay Theater
+let sideCache: SideLine | null = null
+let context = 0 // percent of the context window, token-weather's latest reading
+let blastHeld = false
+let replayOpen = false
+let replayIndex = -1
+let asking = 0 // when Claude started waiting on the person (a permission prompt), 0 if not
+let turnStartedAt = 0
+let night = false
+let nightCheckedAt = 0
+
 // --- the pet's mind, at module scope: the engine only lets $ reach top-level functions ---
 let pet: Pet = { food: 80, love: 60, xp: 0, hidden: false, savedAt: 0 }
 let working = false
 let workMood: Mood = 'think'
-let lastActive = Date.now()
+let lastActive = clockNow()
 let note = ''
+let noteUntil = 0
 let noteColor = '#d97757'
+const noteNow = () => (note && clockNow() < noteUntil ? note : '')
 let doing = '' // what the current tool call is about: "editing register.tsx"
 let lastTap = { at: 0, count: 0 }
 let shownMood: Mood = 'idle'
@@ -495,10 +534,10 @@ const hopRows = (lift: number) => (lift >= 2 ? 1 : 0)
 let held = { size: 0, rows: 0, until: 0 }
 // the status line, centred on the band's bottom row; Clawd hops over it
 let cap = { left: 0, width: 0, text: '' }
-let lastDecay = Date.now()
+let lastDecay = clockNow()
 let ticker: Timer | undefined
 let lastMove = 0
-let lastSave = Date.now()
+let lastSave = clockNow()
 let x = 4
 let facing = 1
 // Clawd drawn as a picture, pixel for pixel, unless turned off or the terminal cannot show one
@@ -523,28 +562,60 @@ const levelOf = (xp: number) => Math.floor(Math.sqrt(xp / 20)) + 1
 const bar = (n: number) => '▰'.repeat(Math.round(n / 20)) + '▱'.repeat(5 - Math.round(n / 20))
 const sizeOf = () => Math.max(SIZE_MIN, Math.min(SIZE_MAX, Math.round(pet.size ?? SIZE_DEFAULT)))
 const nameOf = () => (pet.name || 'Clawd').replace(/[<>]/g, '').trim() || 'Clawd'
-// Clawd's range: from minX (just right of a readout's line, 0 without one) to the band's end
+// Clawd's range: from minX (just right of a readout's line, 0 without one) to rangeRight, set by
+// each drawing from the width it is drawn at, on the terminal and the desktop alike
 let minX = 0
-const maxX = () => Math.max(minX, (band?.cols ?? 80) - sizeOf() - 1)
+let rangeRight: number | null = null
+const maxX = () => Math.max(minX, rangeRight ?? 80 - sizeOf() - 1)
 const walkSpeed = (k: number) => k * Math.max(1, sizeOf() / 9)
 
 /**
  * Keeps Clawd and every walk it has planned inside its range, after the range moved (the terminal
  * resized, the readout's line grew): a walk aimed past an edge would otherwise never arrive.
  */
-function keepInRange(cols: number) {
-  const right = Math.max(minX, cols - sizeOf() - 1)
-  const into = (n: number) => Math.max(minX, Math.min(right, n))
+function keepInRange() {
+  const into = (n: number) => Math.max(minX, Math.min(maxX(), n))
   x = into(x)
   if (step.to !== undefined) step = { ...step, to: into(step.to) }
   plan = plan.map(p => (p.to === undefined ? p : { ...p, to: into(p.to) }))
 }
 
 function moodNow(now: number): Mood {
+  if (blastHeld) return 'alarm'
+  if (asking && now - asking < ASK_MS) return 'ask'
   if (working) return workMood
+  if (replayOpen) return 'watch'
+  if (context >= CROWDED) return 'crowded'
   if (pet.food < 30) return 'hungry'
-  if (now - lastActive > SLEEP_AFTER_MS) return 'sleep'
+  if (now - lastActive > (night ? NIGHT_SLEEP_AFTER_MS : SLEEP_AFTER_MS)) return 'sleep'
   return 'idle'
+}
+
+/** What Clawd does as it enters a mood: a start, a line. */
+function enterMood(mood: Mood, from: Mood, now: number) {
+  const line = (text: string, color: string, ms = 3500) => {
+    note = text
+    noteColor = color
+    noteUntil = now + ms
+  }
+  const start = (clip: string) => {
+    shot = { clip, until: now + clipMs(clip) }
+    playing = ''
+  }
+  if (mood === 'alarm') {
+    start('Jumping')
+    line('whoa, careful!', '#e06c5a')
+  } else if (from === 'alarm') {
+    line('phew', '#77c3ab', 2000)
+  } else if (mood === 'ask') {
+    start('wave')
+    line('need your OK!', '#efb154')
+  } else if (mood === 'crowded') {
+    start('facepalm')
+    line('time to /compact!', '#e06c5a')
+  } else if (mood === 'watch') {
+    line('ooh, a replay', '#699acb', 2000)
+  }
 }
 
 /** Columns between Clawd's body and the caption; negative while they overlap. */
@@ -602,6 +673,9 @@ const once = (clip: string): Step => ({ clip })
  */
 function nextSteps(mood: Mood, now: number): Step[] {
   const near = Math.max(8, sizeOf() * 3)
+  // a turn running long: now and then Clawd flags, then gets back to it
+  if (working && turnStartedAt && now - turnStartedAt > TIRED_MS && Math.random() < 0.3)
+    return [once(fresh([['disappointed', 2], ['meditate', 1], ['sway', 2], ['Dizzy', 1]]))]
   const stepOff = (): Step[] => {
     const w = Math.random() < 0.7 ? walk(near, 'walk', 0.4) : null
     return w ? [w] : []
@@ -619,6 +693,17 @@ function nextSteps(mood: Mood, now: number): Step[] {
     }
     case 'sleep':
       return [hold('Meditating', 8000, now)]
+    case 'alarm': {
+      // to the right edge, where Blast Radius asks, and point at it until it is answered
+      const go = Math.abs(maxX() - x) >= 3 && !pet.still ? [{ clip: 'run', to: maxX(), speed: walkSpeed(0.9) }] : []
+      return [...go, once(fresh([['point', 3], ['wave', 2], ['Jumping', 1]]))]
+    }
+    case 'ask':
+      return [once(fresh([['wave', 3], ['point', 2], ['Jumping', 1]])), hold('stand', 1200, now)]
+    case 'watch':
+      return [hold(fresh([['LookingAroundEyesOnly', 3], ['thinking', 2], ['sway', 2]]), 2500 + Math.random() * 2000, now)]
+    case 'crowded':
+      return [once(fresh([['facepalm', 2], ['disappointed', 2], ['Dizzy', 1], ['lookAround', 1]])), hold('stand', 2500 + Math.random() * 2000, now)]
     case 'hungry':
       return step.clip === 'stand' ? [once('disappointed')] : [hold('stand', 6000 + Math.random() * 4000, now)]
     case 'think':
@@ -655,7 +740,9 @@ function settle(now: number): boolean {
     const atDesk = step.clip === 'laptop' || step.clip === 'desktop'
     plan = atDesk ? [once(`${step.clip}Out`)] : []
     if (!atDesk) step = { clip: 'stand', until: 0 }
+    const from = shownMood
     shownMood = mood
+    enterMood(mood, from, now)
   }
   if (!shot && stepDone(now)) {
     if (plan.length === 0) plan = nextSteps(mood, now)
@@ -697,7 +784,7 @@ const SOUND: Record<string, string> = {
   sparkCine: 'levelup', facepalm: 'ouch', Dizzy: 'ouch', disappointed: 'ouch', hula: 'wave',
 }
 function react($: Dollar, clip: string, times = 1) {
-  shot = { clip, until: Date.now() + times * clipMs(clip) }
+  shot = { clip, until: clockNow() + times * clipMs(clip) }
   playing = ''
   const sound = SOUND[clip]
   if (sound && pet.sound) void $.audio.play({ asset: `sounds/${sound}.wav` }, { gain: 0.5 }).catch(() => {})
@@ -751,12 +838,70 @@ async function syncHosts($: Dollar) {
   await $.state.set(HOSTS, pet.hidden ? [] : ['token-weather']).catch(() => {})
 }
 
-async function sideLine($: Dollar): Promise<SideLine | null> {
+// the other mods' values Clawd follows, each named where it is read (the engine lists them)
+const TW_READINGS = { plugin: 'token-weather', key: 'readings' } as const
+const BLAST_HELD = { plugin: 'blast-radius', key: 'held' } as const
+const REPLAY_STATE = { plugin: 'replay-theater', key: 'state' } as const
+type OtherGet = (ref: { plugin: string; key: string }) => Promise<{ value?: unknown }>
+/** A read of another plugin's value: undefined when that plugin is not here. */
+const valueOf = (read: Promise<{ value?: unknown }>) => read.then(r => r.value).catch(() => undefined)
+
+const asLine = (v: unknown): SideLine | null =>
+  v && typeof v === 'object' && Array.isArray((v as SideLine).full) ? (v as SideLine) : null
+type Reading = { percent?: number }
+const lastPercent = (v: unknown) => (Array.isArray(v) && v.length ? Number((v[v.length - 1] as Reading).percent) || 0 : 0)
+type ReplayState = { isOpen?: boolean; index?: number }
+type Held = { decision?: string | null } | null
+
+/** Takes in one state write of the mods Clawd follows; true when something Clawd shows changed. */
+function follow(plugin: string, key: string, value: unknown): boolean {
+  if (plugin === 'token-weather' && key === 'line') {
+    sideCache = asLine(value)
+    return true
+  }
+  if (plugin === 'token-weather' && key === 'readings') {
+    const was = context
+    context = lastPercent(value)
+    return (was >= CROWDED) !== (context >= CROWDED)
+  }
+  if (plugin === 'blast-radius' && key === 'held') {
+    const was = blastHeld
+    blastHeld = !!value && (value as Held)?.decision == null
+    return was !== blastHeld
+  }
+  if (plugin === 'replay-theater' && key === 'state') {
+    const r = (value ?? {}) as ReplayState
+    const was = replayOpen
+    replayOpen = !!r.isOpen
+    const moved = replayOpen && was && typeof r.index === 'number' && r.index !== replayIndex
+    replayIndex = typeof r.index === 'number' ? r.index : -1
+    if (moved) {
+      shot = { clip: 'point', until: clockNow() + clipMs('point') } // a new step: Clawd points at it
+      playing = ''
+    }
+    return was !== replayOpen || moved
+  }
+  return false
+}
+
+/** What Clawd follows, as it stands at start (a mod that wrote before Clawd loaded). */
+async function catchUp($: Dollar) {
+  follow('token-weather', 'line', await valueOf(($.state.get as unknown as OtherGet)(SIDE)))
+  follow('token-weather', 'readings', await valueOf(($.state.get as unknown as OtherGet)(TW_READINGS)))
+  follow('blast-radius', 'held', await valueOf(($.state.get as unknown as OtherGet)(BLAST_HELD)))
+  follow('replay-theater', 'state', await valueOf(($.state.get as unknown as OtherGet)(REPLAY_STATE)))
+}
+
+/** Asks the machine its hour now and then: late at night Clawd gets sleepy sooner. */
+async function checkNight($: Dollar, now: number) {
+  if (now - nightCheckedAt < NIGHT_CHECK_MS) return
+  nightCheckedAt = now
   try {
-    const { value } = await ($.state.get as (ref: typeof SIDE) => Promise<{ value?: SideLine | null }>)(SIDE)
-    return value && Array.isArray(value.full) ? value : null
+    const { stdout } = await $.process.run(['date', '+%H'], { timeoutMs: 2000 })
+    const hour = Number(stdout.trim())
+    if (Number.isFinite(hour)) night = hour >= 23 || hour < 6
   } catch {
-    return null
+    // no processes here (the desktop's own host): Clawd keeps day hours
   }
 }
 
@@ -777,7 +922,7 @@ function fitSide(line: SideLine | null, total: number): { segments: Segment[]; w
 }
 
 async function save($: Dollar) {
-  pet.savedAt = Date.now()
+  pet.savedAt = clockNow()
   await $.store.set('pet', pet).catch(err => $.ui.log(`claude-pet: save failed: ${err}`))
 }
 
@@ -845,26 +990,44 @@ function waitMs(now: number): number | null {
 }
 
 /** Runs one tick, then waits until the next is due; an event that wakes Clawd calls kick. */
-function loop($: Dollar) {
-  const now = Date.now()
+async function loop($: Dollar) {
+  await syncClock($)
+  const now = clockNow()
+  void checkNight($, now)
   if (now - lastSave >= SAVE_EVERY_MS) {
     lastSave = now
     decay(now)
     void save($)
   }
   tick($)
-  const ms = waitMs(Date.now())
-  ticker = ms === null ? undefined : $.clock.after(ms, () => loop($))
+  const ms = waitMs(clockNow())
+  ticker = ms === null ? undefined : $.clock.after(ms, () => void loop($))
 }
 
 function kick($: Dollar) {
   ticker?.cancel()
-  ticker = $.clock.after(0, () => loop($))
+  ticker = $.clock.after(0, () => void loop($))
+}
+
+/** A picture the terminal would not take: why decides whether that is for now or for good. */
+function refused($: Dollar, why: string) {
+  if (/no Image of its own is mounted|not mounted/i.test(why)) return // between drawings
+  if (/not asked yet/i.test(why)) {
+    // the terminal (Ghostty) has not been asked about pictures yet: stay a picture, which shows
+    // once it has, never blocks in between
+    $.clock.after(3_000, () => $.ui.invalidate('ui.render'))
+    return
+  }
+  hdRefusals += 1
+  hd = false // blocks for now
+  hdRetryAt = hdRefusals < HD_TRIES ? clockNow() + 60_000 : 0
+  $.ui.log(`claude-pet: pictures refused (${why}); blocks${hdRetryAt ? ', trying pictures again soon' : ''}`)
+  $.ui.invalidate('ui.render')
 }
 
 function tick($: Dollar) {
   if (pet.hidden) return
-  const now = Date.now()
+  const now = clockNow()
   if (retryPictures(now)) {
     $.ui.invalidate('ui.render') // draw the picture again; its next blit says if it holds
     return
@@ -894,31 +1057,31 @@ function tick($: Dollar) {
       return
     }
     const pic = picture($.plugin.root, spriteOf(playing), f, sizeOf(), flip)
-    void $.ui.blit({ requestId: band.requestId, key: RASTER_KEY, source: pic.source }).then(r => {
-      if (!('deny' in r) || !r.deny) {
-        hdRefusals = 0
-        return
-      }
-      if (/no Image of its own is mounted|not mounted/i.test(r.deny)) return // between drawings
-      if (/not asked yet/i.test(r.deny)) {
-        // the terminal (Ghostty) has not been asked about pictures yet: stay a picture, which
-        // shows once it has, never blocks in between
-        $.clock.after(3_000, () => $.ui.invalidate('ui.render'))
-        return
-      }
-      hdRefusals += 1
-      hd = false // blocks for now
-      hdRetryAt = hdRefusals < HD_TRIES ? Date.now() + 60_000 : 0
-      $.ui.log(`claude-pet: pictures refused (${r.deny}); blocks${hdRetryAt ? ', trying pictures again soon' : ''}`)
-      $.ui.invalidate('ui.render')
-    }).catch(() => {})
+    void $.ui.blit({ requestId: band.requestId, key: RASTER_KEY, source: pic.source }).then(
+      r => ('deny' in r && r.deny ? refused($, r.deny) : (hdRefusals = 0)),
+      err => refused($, String((err as Error)?.message ?? err)), // a refusal may come as a rejection
+    )
     return
   }
   const s = sub(spriteOf(playing), sizeOf())
   void $.ui.blit({ requestId: band.requestId, key: RASTER_KEY, cells: scene(s, f, band.cols, band.rows, Math.round(x), flip, lift) }).catch(() => {})
 }
 
-const captionNow = () => note || (working && doing) || CAPTION[shownMood]
+/** "2m" or "1h 5m": how long the turn has run, once it has run long. */
+function elapsed(now: number): string {
+  if (!working || !turnStartedAt || now - turnStartedAt < LONG_TURN_MS) return ''
+  const m = Math.floor((now - turnStartedAt) / 60_000)
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`
+}
+const captionNow = () => {
+  const now = clockNow()
+  const said = noteNow()
+  if (said) return said
+  if (shownMood === 'alarm' || shownMood === 'ask') return CAPTION[shownMood]
+  const base = (working && doing) || (shownMood === 'sleep' && night ? "it's late… zzz" : CAPTION[shownMood])
+  const long = elapsed(now)
+  return long ? `${base} · ${long}` : base
+}
 const captionText = () => `${nameOf()} Lv.${levelOf(pet.xp)} · ${captionNow()}`
 
 const short = (text: string, n = 28) => (text.length > n ? `${text.slice(0, n - 1)}…` : text)
@@ -962,12 +1125,9 @@ const widthOf = (text: string) =>
 function say($: Dollar, text: string, color = '#d97757', ms = 3000) {
   note = text
   noteColor = color
+  noteUntil = clockNow() + ms
   $.ui.invalidate('ui.render')
-  $.clock.after(ms, () => {
-    if (note !== text) return
-    note = ''
-    $.ui.invalidate('ui.render')
-  })
+  $.clock.after(ms, () => $.ui.invalidate('ui.render'))
 }
 
 const HELP = [
@@ -991,7 +1151,7 @@ async function command($: Dollar, raw: string): Promise<string> {
   const head = bare ? 'size' : first
   const verb = head.toLowerCase()
   const arg = bare ? first : rest.join(' ')
-  lastActive = Date.now()
+  lastActive = clockNow()
   if (verb === '') {
     pet.hidden = !pet.hidden
     await save($)
@@ -1047,7 +1207,7 @@ async function command($: Dollar, raw: string): Promise<string> {
   }
   if (verb === 'come') {
     pet.still = false
-    plan = [{ clip: 'walk', to: offCaption(Math.round((minX + maxX()) / 2)), speed: walkSpeed(0.4) }, once('wave'), hold('stand', 6000, Date.now())]
+    plan = [{ clip: 'walk', to: offCaption(Math.round((minX + maxX()) / 2)), speed: walkSpeed(0.4) }, once('wave'), hold('stand', 6000, clockNow())]
     step = { clip: 'stand', until: 0 }
     say($, 'coming!')
     return `${nameOf()} is coming over.`
@@ -1109,11 +1269,13 @@ async function command($: Dollar, raw: string): Promise<string> {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    await syncClock($, true)
+    lastActive = lastDecay = lastSave = clockNow()
     const saved = (await $.store.get('pet').catch(() => undefined)) as Pet | undefined
     if (saved && typeof saved.food === 'number') {
-      const minutes = Math.max(0, (Date.now() - (saved.savedAt || Date.now())) / 60_000)
+      const minutes = Math.max(0, (clockNow() - (saved.savedAt || clockNow())) / 60_000)
       pet = { ...saved, food: clamp(saved.food - minutes / 6), love: clamp(saved.love - minutes / 12) }
-      lastDecay = Date.now()
+      lastDecay = clockNow()
       if (typeof pet.size !== 'number') pet.size = SIZE_DEFAULT
     }
     // once: the xp Clawd earned as the inline dev mod, whose store this install cannot read
@@ -1127,12 +1289,15 @@ export const register: Register = on => {
     // pictures need the frames made ahead; without them, blocks
     if (!(await $.fs.exists(`${$.plugin.root}/frames/Swaying/0.png`).catch(() => false))) hd = false
     await syncHosts($)
+    await catchUp($)
+    void checkNight($, clockNow())
     await $.command.register({ name: 'pet', description: 'Clawd the pet: /pet help for everything (feed, pat, size, dance…)' })
     kick($)
     return next(e)
   })
 
   on('command.run', { command: 'pet' }, async ($, e) => {
+    await syncClock($)
     const text = await command($, e.args)
     await syncHosts($) // hide and show flip who draws the readout
     kick($)
@@ -1140,23 +1305,28 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    await syncClock($)
     working = true
+    turnStartedAt = clockNow()
+    asking = 0
     workMood = 'think'
     doing = ''
-    lastActive = Date.now()
+    lastActive = clockNow()
     react($, 'startHop')
     kick($)
     return next(e)
   })
 
   on('tool.call', async ($, e, next) => {
+    await syncClock($)
     working = true
     workMood = TOOL_MOOD[e.tool] ?? 'work'
     const input = ((e as { input?: unknown }).input ?? {}) as Record<string, unknown>
     doing = describe(e.tool, input)
-    lastActive = Date.now()
+    lastActive = clockNow()
     kick($)
     const ran = await next(e)
+    asking = 0 // whatever it waited on (a permission prompt) is answered
     if (ran.isError) react($, pick(OUCH))
     else if (!ran.deny) {
       pet.xp += workMood === 'edit' ? 3 : 1
@@ -1172,9 +1342,12 @@ export const register: Register = on => {
   })
 
   on('turn.complete', async ($, e, next) => {
+    await syncClock($)
+    turnStartedAt = 0
+    asking = 0
     const before = levelOf(pet.xp)
     working = false
-    lastActive = Date.now()
+    lastActive = clockNow()
     doing = ''
     pet.xp += 5
     pet.food = clamp(pet.food + 2) // a snack for every finished turn
@@ -1190,10 +1363,11 @@ export const register: Register = on => {
   // a click on the band: on Clawd, a pat; a flurry of them makes it dizzy
   on('ui.message', async ($, e, next) => {
     if (e.element !== 'touch') return next(e)
+    await syncClock($)
     const at = (e.data as { x?: number } | null)?.x ?? -1
     const body = Math.round(x)
     if (at < body - 1 || at > body + sizeOf()) return {}
-    const now = Date.now()
+    const now = clockNow()
     lastTap = now - lastTap.at < 1500 ? { at: now, count: lastTap.count + 1 } : { at: now, count: 1 }
     lastActive = now
     pet.love = clamp(pet.love + 3)
@@ -1209,18 +1383,40 @@ export const register: Register = on => {
     return {}
   })
 
+  // Claude waits on the person (a permission prompt): Clawd waves for attention
+  on('classic.Notification', async ($, e, next) => {
+    await syncClock($)
+    const kind = `${e.notification_type ?? ''} ${e.message ?? ''}`
+    if (/permission|approv|allow/i.test(kind)) asking = clockNow()
+    else if (/idle|waiting for your input/i.test(kind) && !working) say($, 'your turn~', '#77c3ab')
+    kick($)
+    return next(e)
+  })
+
+  // the other mods' state, followed as they write it: no reads while drawing
+  on('state.set', async ($, e, next) => {
+    const r = await next(e)
+    const w = e as unknown as { plugin: string; key: string; value: unknown }
+    if (w.plugin !== 'claude-pet' && follow(w.plugin, w.key, w.value)) {
+      $.ui.invalidate('ui.render')
+      kick($)
+    }
+    return r
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (pet.hidden || e.props.hasSurvey) return next(e)
     if (e.surface !== 'terminal' && e.surface !== 'desktop') return next(e)
     working = e.props.isWorking
-    const now = Date.now()
+    await syncClock($)
+    const now = clockNow()
     settle(now)
     const caption = captionNow()
-    const color = note ? noteColor : CAPTION_COLOR[shownMood]
+    const color = noteNow() ? noteColor : CAPTION_COLOR[shownMood]
     const below = await next(e)
 
     // the readout (token-weather) rides on Clawd's line on both surfaces
-    const side = fitSide(await sideLine($), Math.max(20, Math.min(512, e.props.bodyColumns)))
+    const side = fitSide(sideCache, Math.max(20, Math.min(512, e.props.bodyColumns)))
     const runs = side.segments.map(seg => {
       const { Text } = $.ui.resolve(e)
       return (
@@ -1230,7 +1426,13 @@ export const register: Register = on => {
       )
     })
     if (e.surface === 'desktop') {
-      // the desktop plays each clip as an SVG; a new clip, a step along or a new line is a redraw
+      // the desktop plays each clip as an SVG; a new clip, a step along or a new line is a redraw.
+      // Clawd's range: what the band's width leaves after the readout, its picture and its caption
+      const readoutWidth = side.segments.reduce((w, seg) => w + widthOf(seg.children), 0)
+      const picture = Math.ceil((CW * PX) / DESKTOP_CELL_PX)
+      minX = 0
+      rangeRight = Math.max(0, Math.max(20, e.props.bodyColumns) - readoutWidth - picture - widthOf(captionText()) - 4)
+      keepInRange()
       desktop = { at: Math.round(x), caption: captionText() }
       const { Box, Text, Svg } = $.ui.resolve(e)
       return (
@@ -1266,6 +1468,7 @@ export const register: Register = on => {
       ? Math.min(side.width - SIDE_GAP, side.segments.reduce((w, seg) => w + widthOf(seg.children), 0) + widthOf(SIDE_SEP) + widthOf(text))
       : 0
     minX = side.width ? Math.min(1 + lineWidth + 2, Math.max(0, cols - sizeOf() - 1)) : 0
+    rangeRight = cols - sizeOf() - 1
     const rows = Math.min(bandRows(now), maxRows)
     const { Box, Text, Raster, Image, Client } = $.ui.resolve(e)
     // Clawd's caption as runs of Text, to sit inside another Text (a fragment there is refused)
@@ -1281,7 +1484,7 @@ export const register: Register = on => {
         {own}
       </Text>
     )
-    keepInRange(cols)
+    keepInRange()
     if (rows < 1) return side.width ? <Box flexDirection="column">{below}<Box paddingLeft={1}>{readout}</Box></Box> : below
     band = { requestId: e.requestId, cols, rows, maxRows, x: Math.round(x), hop: hopRows(liftAt(Math.round(x))) }
     const f = frameNow(now)
