@@ -404,6 +404,21 @@ const CHEER = ['danceOnce', 'startHop', 'excitedPick', 'wave', 'Jumping', 'hula'
 const GAITS: [string, number][] = [['walk', 6], ['crabRun', 2], ['run', 2]]
 const GAIT_SPEED: Record<string, number> = { walk: 0.3, crabRun: 0.35, run: 0.9 }
 const OUCH = ['facepalm', 'Dizzy', 'disappointed']
+const WORK_MOODS = new Set<Mood>(['think', 'search', 'edit', 'shell', 'agent', 'work'])
+// at work, between bouts at the desk: a glance, a thought, a point at the screen
+const WORK_BEATS: [string, number][] = [
+  ['lookAround', 2], ['LookingAroundEyesOnly', 2], ['point', 2], ['thinking', 2], ['turning', 2],
+  ['lightbulb', 1], ['excitedPick', 1], ['sway', 1], ['startHop', 1], ['wave', 1],
+]
+// a quick beat as a tool call comes back, by what it was; at most one every BEAT_GAP_MS
+const TOOL_BEATS: Partial<Record<Mood, [string, number][]>> = {
+  edit: [['excitedPick', 2], ['startHop', 2], ['point', 1], ['lightbulb', 1]],
+  shell: [['point', 2], ['LookingAroundEyesOnly', 2], ['startHop', 1], ['turning', 1]],
+  search: [['LookingAroundEyesOnly', 2], ['lookAround', 2], ['point', 1], ['lightbulb', 1]],
+  agent: [['wave', 2], ['point', 1], ['Jumping', 1]],
+  work: [['turning', 1], ['point', 1], ['sway', 1]],
+}
+const BEAT_GAP_MS = 3000
 
 // What Clawd learns as it levels up: [level, the move, what it is called]. Everything not listed
 // it knows from the start; the showiest moves come last. Every pick of a move goes through
@@ -558,6 +573,7 @@ let noteColor = '#d97757'
 const noteNow = () => (note && clockNow() < noteUntil ? note : '')
 let doing = '' // what the current tool call is about: "editing register.tsx"
 let lastTap = { at: 0, count: 0 }
+let lastBeat = 0 // when Clawd last reacted to a tool call coming back
 let shownMood: Mood = 'idle'
 /** One thing Clawd does: a clip, held `until`, played once, or walked to `to`. */
 type Step = { clip: string; until?: number; to?: number; speed?: number }
@@ -749,21 +765,28 @@ function nextSteps(mood: Mood, now: number): Step[] {
     case 'hungry':
       return step.clip === 'stand' ? [once('disappointed')] : [hold('stand', 6000 + Math.random() * 4000, now)]
     case 'think':
-      return [once(fresh([['thinking', 4], ['lightbulb', 2], ['LookingAroundEyesOnly', 1], ['turning', 1], ['meditate', 1]])), ...stepOff()]
-    case 'search':
-      return [once(fresh([['lookAround', 4], ['LookingAroundEyesOnly', 3], ['point', 2], ['turning', 1]])), ...stepOff()]
+      return [
+        once(fresh([['thinking', 4], ['lightbulb', 2], ['LookingAroundEyesOnly', 2], ['turning', 1], ['meditate', 1], ['sway', 1]])),
+        once(fresh(WORK_BEATS)),
+        ...(Math.random() < 0.5 ? stepOff() : []),
+      ]
+    case 'search': {
+      const roam = Math.random() < 0.4 ? wander(near * 2) : null
+      return [...(roam ? [roam] : []), once(fresh([['lookAround', 4], ['LookingAroundEyesOnly', 3], ['point', 2], ['turning', 1]])), once(fresh(WORK_BEATS))]
+    }
     case 'edit':
     case 'shell': {
-      // side-on at the desktop, Clawd's head is lost below size 9 on the terminal's blocks
+      // short bouts at the desk, a beat between them; side-on at the desktop, Clawd's head is
+      // lost below size 9 on the terminal's blocks
       desk = sizeOf() >= 9 || hd ? pick(['laptop', 'desktop']) : 'laptop'
-      return [hold(desk, 6000 + Math.random() * 5000, now), once(`${desk}Out`), ...stepOff()]
+      return [hold(desk, 2500 + Math.random() * 2000, now), once(`${desk}Out`), once(fresh(WORK_BEATS)), ...(Math.random() < 0.5 ? stepOff() : [])]
     }
     case 'agent': {
       const w = walk(maxX(), or(Math.random() < 0.7 ? 'run' : 'crabRun', 'walk'), knows('run') ? 0.9 : 0.4)
       return [w ?? once('wave'), once(fresh([['wave', 3], ['point', 3], ['Jumping', 1], ['excitedPick', 1]]))]
     }
     case 'work':
-      return [...stepOff(), once(fresh([['sway', 3], ['thinking', 3], ['lookAround', 2], ['turning', 1]]))]
+      return [...stepOff(), once(fresh([['sway', 3], ['thinking', 3], ['lookAround', 2], ['turning', 1]])), once(fresh(WORK_BEATS))]
   }
 }
 
@@ -777,7 +800,10 @@ function stepDone(now: number): boolean {
 function settle(now: number): boolean {
   if (shot && now >= shot.until) shot = null
   const mood = moodNow(now)
-  if (mood !== shownMood) {
+  if (mood !== shownMood && WORK_MOODS.has(mood) && WORK_MOODS.has(shownMood)) {
+    // one tool to the next: Clawd carries on with what it is doing, the next move fits the new job
+    shownMood = mood
+  } else if (mood !== shownMood) {
     // leaving the desk, Clawd gets up first
     const atDesk = step.clip === 'laptop' || step.clip === 'desktop'
     plan = atDesk ? [once(`${step.clip}Out`)] : []
@@ -1388,6 +1414,11 @@ export const register: Register = on => {
     kick($)
     const ran = await next(e)
     asking = 0 // whatever it waited on (a permission prompt) is answered
+    const beats = TOOL_BEATS[workMood]
+    if (!ran.isError && !ran.deny && beats && clockNow() - lastBeat > BEAT_GAP_MS && Math.random() < 0.6) {
+      lastBeat = clockNow()
+      react($, fresh(beats))
+    }
     if (ran.isError) react($, pick(OUCH.filter(knows)))
     else if (!ran.deny) {
       pet.xp += workMood === 'edit' ? 3 : 1

@@ -243,7 +243,11 @@ test('at Lv.10 the big moves come up', async ($, on) => {
   const { clock, blits } = world(on, { xp: 1620 })
   await boot($)
   const ui = await $.ui.mount(band(160))
-  await clock.advance(150_000)
+  // three stretches of idling, each woken first so Clawd does not doze off
+  for (let i = 0; i < 3; i++) {
+    await pet($, 'stats')
+    await clock.advance(150_000)
+  }
   const big = blits.map(spriteOf).filter(s => s && BIG.has(s))
   expect(new Set(big).size).toBeGreaterThanOrEqual(2)
   await ui.unmount()
@@ -277,4 +281,31 @@ test('the title rides beside the name, all the time', async ($, on) => {
     expect(await caption(ui)).toMatch(/^Clawd Lv\.5 Dancer · /)
     await ui.unmount()
   }
+})
+
+test('at work Clawd stays lively: many moves across a busy turn', async ($, on) => {
+  const { clock, blits } = world(on, { xp: 404 })
+  await boot($)
+  await $.prompt.submit({ text: 'hi' } as never)
+  const ui = await $.ui.mount(band(160, 'terminal', true))
+  const calls = [
+    { tool: 'Read', input: { file_path: '/repo/a.ts' } },
+    { tool: 'Edit', input: { file_path: '/repo/a.ts', old_string: 'a', new_string: 'b' } },
+    { tool: 'Bash', input: { command: 'npm run build', description: 'Build' } },
+    { tool: 'Grep', input: { pattern: 'foo' } },
+  ]
+  for (let i = 0; i < 24; i++) {
+    await $.tool.call(calls[i % calls.length] as never)
+    await clock.advance(5_000)
+  }
+  const seen = new Set(blits.map(spriteOf).filter(Boolean))
+  // two minutes of a busy turn: before this, about 8 moves, a change every 7 s, 9 tenths at the desk
+  const seq = blits.map(spriteOf).filter(Boolean) as string[]
+  const switches = seq.filter((s, i) => i > 0 && s !== seq[i - 1]).length
+  const desk = seq.filter(s => s === 'Laptop' || s === 'Desktop').length / Math.max(1, seq.length)
+  expect(seen.size).toBeGreaterThanOrEqual(11)
+  expect(switches).toBeGreaterThanOrEqual(35)
+  expect(desk).toBeLessThan(0.6)
+  expect(seen.has('Laptop') || seen.has('Desktop')).toBe(true) // still gets work done at the desk
+  await ui.unmount()
 })
