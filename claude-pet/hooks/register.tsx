@@ -397,13 +397,55 @@ const FLOURISH: [string, number][] = [
   ['sway', 3], ['lookAround', 3], ['LookingAroundEyesOnly', 2], ['turning', 3], ['point', 3], ['wave', 3],
   ['danceOnce', 3], ['excitedPick', 2], ['hula', 2], ['startHop', 2], ['Jumping', 2], ['breakOnce', 2],
   ['thinking', 1], ['lightbulb', 1], ['meditate', 1], ['danceCine', 1], ['confettiCine', 1], ['sparkCine', 1],
-  ['facepalm', 1], ['Dizzy', 1],
+  ['facepalm', 1], ['Dizzy', 1], ['breakCine', 1],
 ]
 const CHEER = ['danceOnce', 'startHop', 'excitedPick', 'wave', 'Jumping', 'hula', 'breakOnce', 'turning']
 // how Clawd gets somewhere: mostly a walk, sometimes sideways like a crab, sometimes a dash
 const GAITS: [string, number][] = [['walk', 6], ['crabRun', 2], ['run', 2]]
 const GAIT_SPEED: Record<string, number> = { walk: 0.3, crabRun: 0.35, run: 0.9 }
 const OUCH = ['facepalm', 'Dizzy', 'disappointed']
+
+// What Clawd learns as it levels up: [level, the move, what it is called]. Everything not listed
+// it knows from the start; the showiest moves come last. Every pick of a move goes through
+// `knows`, so a move Clawd has not learned never plays, idle, at work or as a reaction.
+const LEARNED: [number, string, string][] = [
+  [2, 'danceOnce', 'a happy dance'],
+  [2, 'excitedPick', 'getting excited'],
+  [2, 'run', 'running'],
+  [3, 'hula', 'the hula'],
+  [3, 'Jumping', 'jumping'],
+  [3, 'crabRun', 'a crab walk'],
+  [4, 'thinking', 'thinking it over'],
+  [4, 'lightbulb', 'bright ideas'],
+  [4, 'meditate', 'meditation'],
+  [5, 'breakOnce', 'a breakdance move'],
+  [5, 'facepalm', 'facepalms'],
+  [6, 'Dizzy', 'spinning till dizzy'],
+  [6, 'confettiCine', 'confetti'],
+  [7, 'danceCine', 'a long dance'],
+  [8, 'sparkCine', 'magic'],
+  [10, 'breakCine', 'a full breakdance'],
+]
+const levelFor = (move: string) => LEARNED.find(([, m]) => m === move)?.[0] ?? 1
+const knows = (move: string) => levelFor(move) <= levelOf(pet.xp)
+/** The move if Clawd knows it, else the plainer one it falls back on. */
+const or = (move: string, plain: string) => (knows(move) ? move : plain)
+
+// a title every few levels, in /pet stats and the level-up toast
+const TITLES: [number, string][] = [
+  [1, 'Hatchling'],
+  [3, 'Explorer'],
+  [5, 'Dancer'],
+  [7, 'Showstar'],
+  [8, 'Magician'],
+  [10, 'Legend'],
+]
+const titleOf = (level: number) => [...TITLES].reverse().find(([lv]) => lv <= level)![1]
+/** The /pet tricks by the level each is learned at (a trick plays a move, often a learned one). */
+const TRICK_LEVEL: Record<string, number> = {
+  dance: 2, excited: 2, hula: 3, jump: 3, crab: 3, idea: 4, think: 4, meditate: 4,
+  breakdance: 5, facepalm: 5, spin: 6, party: 6, spark: 8,
+}
 
 const CAPTION: Record<Mood, string> = {
   think: 'thinking…',
@@ -603,7 +645,7 @@ function enterMood(mood: Mood, from: Mood, now: number) {
     playing = ''
   }
   if (mood === 'alarm') {
-    start('Jumping')
+    start(or('Jumping', 'startHop'))
     line('whoa, careful!', '#e06c5a')
   } else if (from === 'alarm') {
     line('phew', '#77c3ab', 2000)
@@ -611,7 +653,7 @@ function enterMood(mood: Mood, from: Mood, now: number) {
     start('wave')
     line('need your OK!', '#efb154')
   } else if (mood === 'crowded') {
-    start('facepalm')
+    start(or('facepalm', 'disappointed'))
     line('time to /compact!', '#e06c5a')
   } else if (mood === 'watch') {
     line('ooh, a replay', '#699acb', 2000)
@@ -684,8 +726,8 @@ function nextSteps(mood: Mood, now: number): Step[] {
     case 'idle': {
       if (step.clip !== 'stand') return [hold('stand', 1200 + Math.random() * 2300, now)]
       const r = Math.random()
-      if (r < 0.18) {
-        const steps = pick(ROUTINES)().filter((s): s is Step => s !== null)
+      if (r < routineChance()) {
+        const steps = pick(routines())().filter((s): s is Step => s !== null)
         if (steps.length) return steps
       }
       const w = r < 0.5 ? wander() : null
@@ -695,7 +737,7 @@ function nextSteps(mood: Mood, now: number): Step[] {
       return [hold('Meditating', 8000, now)]
     case 'alarm': {
       // to the right edge, where Blast Radius asks, and point at it until it is answered
-      const go = Math.abs(maxX() - x) >= 3 && !pet.still ? [{ clip: 'run', to: maxX(), speed: walkSpeed(0.9) }] : []
+      const go = Math.abs(maxX() - x) >= 3 && !pet.still ? [{ clip: or('run', 'walk'), to: maxX(), speed: walkSpeed(knows('run') ? 0.9 : 0.4) }] : []
       return [...go, once(fresh([['point', 3], ['wave', 2], ['Jumping', 1]]))]
     }
     case 'ask':
@@ -717,7 +759,7 @@ function nextSteps(mood: Mood, now: number): Step[] {
       return [hold(desk, 6000 + Math.random() * 5000, now), once(`${desk}Out`), ...stepOff()]
     }
     case 'agent': {
-      const w = walk(maxX(), Math.random() < 0.7 ? 'run' : 'crabRun', 0.9)
+      const w = walk(maxX(), or(Math.random() < 0.7 ? 'run' : 'crabRun', 'walk'), knows('run') ? 0.9 : 0.4)
       return [w ?? once('wave'), once(fresh([['wave', 3], ['point', 3], ['Jumping', 1], ['excitedPick', 1]]))]
     }
     case 'work':
@@ -790,36 +832,44 @@ function react($: Dollar, clip: string, times = 1) {
   if (sound && pet.sound) void $.audio.play({ asset: `sounds/${sound}.wav` }, { gain: 0.5 }).catch(() => {})
 }
 
-const flourishes = (): [string, number][] => FLOURISH
+// the big numbers: past Lv.5 each level makes them a quarter more likely, routines and confetti too
+const BIG = new Set(['danceOnce', 'breakOnce', 'hula', 'Jumping', 'danceCine', 'confettiCine', 'sparkCine', 'breakCine'])
+const flair = () => Math.max(0, levelOf(pet.xp) - 5)
+const flourishes = (): [string, number][] => FLOURISH.map(([m, w]): [string, number] => [m, BIG.has(m) ? w * (1 + 0.25 * flair()) : w])
+const routineChance = () => Math.min(0.3, 0.18 + 0.02 * flair())
+const confettiChance = () => Math.min(0.25, 0.1 + 0.02 * flair())
 
 // the clips played lately, so a pick skips them and Clawd keeps changing
 let recent: string[] = []
 function fresh(list: [string, number][]): string {
-  const left = list.filter(([c]) => !recent.includes(c))
-  const clip = weighted(left.length ? left : list)
+  const known = list.filter(([c]) => knows(c))
+  const pool = known.length ? known : ([['sway', 1]] as [string, number][])
+  const left = pool.filter(([c]) => !recent.includes(c))
+  const clip = weighted(left.length ? left : pool)
   recent = [...recent, clip].slice(-5)
   return clip
 }
 
 /** A walk in some gait, to anywhere in Clawd's range. */
 function wander(reach = maxX()): Step | null {
-  const gait = weighted(GAITS)
+  const gait = weighted(GAITS.filter(([g]) => knows(g)))
   return walk(reach, gait, GAIT_SPEED[gait])
 }
 
 // little routines: a few moves strung together, now and then, so Clawd seems to have a plan
-const ROUTINES: (() => (Step | null)[])[] = [
-  () => [wander(), once('lookAround'), once('point')],
-  () => [walk(maxX(), 'run', 0.9), once('startHop'), once('wave')],
-  () => [walk(maxX(), 'crabRun', 0.35), once('Jumping')],
-  () => [once('danceOnce'), once('breakOnce'), once('confettiCine')],
-  () => [once('thinking'), once('lightbulb'), once('excitedPick')],
-  () => [once('turning'), once('hula'), once('wave')],
-  () => [once('LookingAroundEyesOnly'), once('facepalm')],
-  () => [wander(), once('meditate')],
-  () => [once('Jumping'), once('Dizzy'), once('sway')],
-  () => [once('sparkCine'), once('excitedPick')],
+const ROUTINES: [number, () => (Step | null)[]][] = [
+  [1, () => [wander(), once('lookAround'), once('point')]],
+  [2, () => [walk(maxX(), 'run', 0.9), once('startHop'), once('wave')]],
+  [3, () => [walk(maxX(), 'crabRun', 0.35), once('Jumping')]],
+  [3, () => [once('turning'), once('hula'), once('wave')]],
+  [4, () => [once('thinking'), once('lightbulb'), once('excitedPick')]],
+  [4, () => [wander(), once('meditate')]],
+  [5, () => [once('LookingAroundEyesOnly'), once('facepalm')]],
+  [6, () => [once('Jumping'), once('Dizzy'), once('sway')]],
+  [7, () => [once('danceOnce'), once('breakOnce'), once('confettiCine')]],
+  [8, () => [once('sparkCine'), once('excitedPick')]],
 ]
+const routines = () => ROUTINES.filter(([lv]) => lv <= levelOf(pet.xp)).map(([, r]) => r)
 
 // A one-line readout another mod hands over to draw beside Clawd, on the caption's row, so the
 // two never share a cell: Clawd strolls only to the right of it. Each entry is that mod's
@@ -1135,10 +1185,10 @@ const HELP = [
   '/pet feed | pat               feed | pat',
   '/pet size 6                   any size 4-40 (body width in columns); /pet bigger | smaller',
   '/pet come | run | stay | roam come here | run a lap | stay put | wander again',
-  `/pet ${Object.keys(TRICKS).join(' | ')}`,
+  `/pet ${Object.keys(TRICKS).join(' | ')}   (some learned at higher levels)`,
   '/pet name Yanbaby             rename',
   '/pet sound on | off           little chiptune sounds for its reactions (off by default)',
-  '/pet stats                    level, hunger, mood, moves',
+  '/pet stats                    level, title, hunger, mood, moves learned',
   'click Clawd to pat it; click it a lot and it gets dizzy',
 ].join('\n')
 
@@ -1214,7 +1264,7 @@ async function command($: Dollar, raw: string): Promise<string> {
   }
   if (verb === 'run') {
     pet.still = false
-    plan = [{ clip: 'run', to: x < (minX + maxX()) / 2 ? maxX() : minX, speed: walkSpeed(0.9) }, once('startHop')]
+    plan = [{ clip: or('run', 'walk'), to: x < (minX + maxX()) / 2 ? maxX() : minX, speed: walkSpeed(knows('run') ? 0.9 : 0.4) }, once('startHop')]
     step = { clip: 'stand', until: 0 }
     say($, 'zoom!')
     return `${nameOf()} is running.`
@@ -1249,15 +1299,24 @@ async function command($: Dollar, raw: string): Promise<string> {
     return pet.sound ? `${nameOf()} makes little sounds now. /pet sound off to mute.` : `${nameOf()} is quiet.`
   }
   if (verb === 'stats') {
+    const level = levelOf(pet.xp)
+    const next = LEARNED.filter(([lv]) => lv > level)
+    const at = next[0]?.[0]
+    const known = FLOURISH.filter(([m]) => knows(m)).length + routines().length
+    const total = FLOURISH.length + ROUTINES.length
     return [
-      `${nameOf()}  Lv.${levelOf(pet.xp)} (xp ${pet.xp})`,
+      `${nameOf()}  Lv.${level} ${titleOf(level)} (xp ${pet.xp}${at ? ` · Lv.${at} at ${20 * (at - 1) ** 2}` : ''})`,
       `food ${bar(pet.food)} ${Math.round(pet.food)}%`,
       `mood ${bar(pet.love)} ${Math.round(pet.love)}%`,
       `size ${sizeOf()} · ${hdOn() ? 'pixel-perfect' : 'blocks'} · sound ${pet.sound ? 'on' : 'off'}`,
-      `moves: ${FLOURISH.length} flourishes, ${ROUTINES.length} routines, ${Object.keys(TRICKS).length} tricks`,
+      `moves: ${known}/${total} learned${at ? ` · Lv.${at} brings ${next.filter(([lv]) => lv === at).map(([, , name]) => name).join(', ')}` : ' · all of them!'}`,
     ].join('\n')
   }
   const trick = TRICKS[verb]
+  if (trick && (TRICK_LEVEL[verb] ?? 1) > levelOf(pet.xp)) {
+    react($, 'turning')
+    return `${nameOf()} learns ${verb} at Lv.${TRICK_LEVEL[verb]} (now Lv.${levelOf(pet.xp)}). Keep working together!`
+  }
   if (trick) {
     react($, trick[0], trick[1])
     say($, trick[2], '#e8495c', Math.min(6000, trick[1] * clipMs(trick[0])))
@@ -1327,7 +1386,7 @@ export const register: Register = on => {
     kick($)
     const ran = await next(e)
     asking = 0 // whatever it waited on (a permission prompt) is answered
-    if (ran.isError) react($, pick(OUCH))
+    if (ran.isError) react($, pick(OUCH.filter(knows)))
     else if (!ran.deny) {
       pet.xp += workMood === 'edit' ? 3 : 1
       // a passing test run is a treat
@@ -1351,10 +1410,16 @@ export const register: Register = on => {
     doing = ''
     pet.xp += 5
     pet.food = clamp(pet.food + 2) // a snack for every finished turn
-    if (levelOf(pet.xp) > before) {
-      react($, 'sparkCine')
-      $.ui.toast(`${nameOf()} reached Lv.${levelOf(pet.xp)}!`)
-    } else react($, Math.random() < 0.1 ? 'confettiCine' : fresh(CHEER.map((c): [string, number] => [c, 1])))
+    const level = levelOf(pet.xp)
+    if (level > before) {
+      // a level up: the newest move it learned, and a toast with all it learned
+      const learned = LEARNED.filter(([lv]) => lv > before && lv <= level)
+      const newest = learned.map(([, m]) => m).filter(m => !GAIT_SPEED[m]).pop()
+      react($, newest ?? or('sparkCine', 'startHop'))
+      const title = titleOf(level) !== titleOf(before) ? ` · ${titleOf(level)}` : ''
+      const what = learned.length ? ` Learned ${learned.map(([, , name]) => name).join(', ')}.` : ''
+      $.ui.toast(`${nameOf()} reached Lv.${level}${title}!${what}`)
+    } else react($, Math.random() < confettiChance() && knows('confettiCine') ? 'confettiCine' : fresh(CHEER.map((c): [string, number] => [c, 1])))
     kick($)
     await save($)
     return next(e)
@@ -1372,8 +1437,8 @@ export const register: Register = on => {
     lastActive = now
     pet.love = clamp(pet.love + 3)
     if (lastTap.count >= 4) {
-      react($, 'Dizzy')
-      say($, 'whoa… dizzy', '#efb154')
+      react($, or('Dizzy', 'startHop'))
+      say($, knows('Dizzy') ? 'whoa… dizzy' : 'hey hey hey!', '#efb154')
       lastTap = { at: 0, count: 0 }
     } else {
       react($, lastTap.count === 1 ? 'wave' : 'startHop')

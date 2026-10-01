@@ -21,10 +21,16 @@ type Blit = { source?: { file?: string }; cells?: string }
  * The world beneath Clawd on a mock clock: a store, the frames on disk, a terminal that takes
  * pictures (or refuses them as `refuse` says), the hour `date` answers. Returns what was blitted.
  */
-function world(on: On, opts: { refuse?: (n: number) => string | undefined; hour?: string } = {}) {
+function world(on: On, opts: { refuse?: (n: number) => string | undefined; hour?: string; xp?: number } = {}) {
   const clock = mock.clock(on, { now: 1_700_000_000_000 })
-  mock.store(on)
+  const saved = { food: 80, love: 60, xp: opts.xp ?? 0, hidden: false, savedAt: 1_700_000_000_000, size: 9, name: 'Clawd', merged: true }
+  mock.store(on, opts.xp === undefined ? undefined : { pet: saved })
   const blits: Blit[] = []
+  const toasts: string[] = []
+  on('ui.toast', async (_$: any, e: any) => {
+    toasts.push(typeof e === 'string' ? e : JSON.stringify(e))
+    return { value: undefined } as never
+  })
   on('session.start', async (_$: any, e: any) => ({ cwd: e.cwd }) as never)
   on('fs.exists', async () => ({ value: true }) as never)
   on('command.register', async () => ({ value: { command: 'pet' } }) as never)
@@ -40,7 +46,7 @@ function world(on: On, opts: { refuse?: (n: number) => string | undefined; hour?
   on('turn.complete', async () => ({ text: '' }) as never)
   on('tool.call', async () => ({ result: 'ok', text: 'ok' }) as never)
   on('classic.Notification', async () => ({}) as never)
-  return { clock, blits }
+  return { clock, blits, toasts }
 }
 
 const boot = ($: Engine) => $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' } as never)
@@ -216,4 +222,48 @@ test('late at night Clawd nods off sooner', async ($, on) => {
   await clock.advance(60_000)
   expect(await caption(ui)).toMatch(/late/)
   await ui.unmount()
+})
+
+// the sprites of the moves Clawd knows from Lv.1: standing, looking, turning, pointing, waving, hops, walks
+const LV1 = new Set(['Swaying', 'LookingAround', 'LookingAroundEyesOnly', 'Turning', 'Pointing', 'Waving', 'JumpingHappy', 'Walking'])
+const BIG = new Set(['DancingHappy', 'BreakDancing', 'Hula', 'Jumping', 'Confetti', 'Spark'])
+
+test('at Lv.1 Clawd only does what it has learned', async ($, on) => {
+  const { clock, blits } = world(on, { xp: 0 })
+  await boot($)
+  const ui = await $.ui.mount(band(160))
+  await clock.advance(150_000)
+  const seen = new Set(blits.map(spriteOf).filter(Boolean) as string[])
+  expect([...seen].filter(s => !LV1.has(s))).toEqual([])
+  expect(seen.size).toBeGreaterThanOrEqual(3)
+  await ui.unmount()
+})
+
+test('at Lv.10 the big moves come up', async ($, on) => {
+  const { clock, blits } = world(on, { xp: 1620 })
+  await boot($)
+  const ui = await $.ui.mount(band(160))
+  await clock.advance(150_000)
+  const big = blits.map(spriteOf).filter(s => s && BIG.has(s))
+  expect(new Set(big).size).toBeGreaterThanOrEqual(2)
+  await ui.unmount()
+})
+
+test('a trick waits for its level, and stats say what comes next', async ($, on) => {
+  world(on, { xp: 404 })
+  await boot($)
+  const locked = await pet($, 'spark')
+  expect(locked.text).toContain('learns spark at Lv.8')
+  const open = await pet($, 'breakdance')
+  expect(open.text).toContain('check out my moves')
+  const stats = (await pet($, 'stats')).text ?? ''
+  expect(stats).toContain('Lv.5 Dancer (xp 404 · Lv.6 at 500)')
+  expect(stats).toContain('Lv.6 brings spinning till dizzy, confetti')
+})
+
+test('a level up says what Clawd learned', async ($, on) => {
+  const { toasts } = world(on, { xp: 495 })
+  await boot($)
+  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
+  expect(toasts.join(' ')).toContain('reached Lv.6! Learned spinning till dizzy, confetti.')
 })
