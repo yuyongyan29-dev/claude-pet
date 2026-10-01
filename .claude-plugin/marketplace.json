@@ -1,0 +1,1 @@
+{ "name": "claude-pet-market", "owner": { "name": "yanyan" }, "plugins": [ { "name": "claude-pet", "source": "./claude-pet", "description": "Clawd pet (local)" } ] }

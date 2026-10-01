@@ -1,0 +1,9 @@
+{
+  "name": "claude-pet",
+  "version": "0.8.5",
+  "description": "Clawd strolls above your prompt using the official clawd-quest pixel animations; reacts to what Claude is doing. /pet help for tricks.",
+  "author": {
+    "name": "yanyan"
+  },
+  "types": "./types/index.d.ts"
+}

@@ -1,0 +1,79 @@
+import { expect, test } from 'claude-code/testing'
+import type { Register } from 'claude-code'
+
+const BAND = {
+  plugin: 'claude-pet',
+  surface: 'terminal',
+  component: 'AbovePrompt',
+  props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },
+} as const
+
+// token-weather as far as Clawd cares: a line it publishes after each turn. The inline plugin
+// runs in an environment of its own, so its data lives inside register.
+const weather: Register = on => {
+  on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
+    const full = [
+      { color: '#77c3ab', children: '☀ ' },
+      { bold: true, color: '#77c3ab', children: 'Clear' },
+      { dimColor: true, children: ' · 19% · 186k/1M · ▂▂▂ +34.4k' },
+    ]
+    await ($.state.set as any)({ plugin: 'token-weather', key: 'line' }, { full, compact: full.slice(0, 2) })
+    return r
+  })
+}
+
+// The leftmost column Clawd's cells take in a Raster's `cells` (base64 of [char, fg, bg] u32s)
+function leftmostCell(raster: { props: Record<string, unknown> }): number {
+  const columns = Number(raster.props.columns)
+  const bytes = Uint8Array.from(atob(String(raster.props.cells)), c => c.charCodeAt(0))
+  const cells = new Uint32Array(bytes.buffer)
+  let left = Infinity
+  for (let i = 0; i < cells.length / 3; i++) if (cells[i * 3] !== 0x20) left = Math.min(left, i % columns)
+  return left
+}
+
+test('the forecast and Clawd\'s caption share one line; Clawd strolls from its end to the band\'s', { plugins: [{ name: 'token-weather', register: weather }] }, async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  await $.turn.complete({ answer: 'done' } as never)
+
+  for (const columns of [120, 160]) {
+    const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: columns } })
+    // one Text holds both: the readout, then Clawd's name, level and what it is doing
+    const line = await ui.find({ type: 'Text', text: /Clear · 19% · 186k\/1M · ▂▂▂ \+34\.4k │ \S+ Lv\.\d+ · / })
+    expect(line).toBeDefined()
+    // the band is as wide as the terminal; Clawd's range starts just past the line's end
+    // blocks draw a Raster as wide as the band; a picture is an Image in a Box placed at its left
+    const raster = (await ui.findAll({ type: 'Raster' }))[0]
+    const picture = (await ui.findAll({ type: 'Box' })).find(b => b.props.position === 'absolute' && (b.children as { type?: string }[] | undefined)?.[0]?.type === 'Image')
+    if (raster) expect(raster.props.columns).toBe(columns)
+    const left = raster ? leftmostCell(raster) : Number(picture?.props.left)
+    expect(Number.isFinite(left)).toBe(true) // Clawd is drawn
+    expect(left).toBeGreaterThanOrEqual(1 + line!.text!.length + 2)
+    await ui.unmount()
+  }
+
+  // narrower: the chart goes first, the caption stays on the line
+  const mid = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 90 } })
+  expect(await mid.find({ type: 'Text', text: /Clear │ / })).toBeDefined()
+  await mid.unmount()
+
+  // too narrow for both: the band is Clawd's alone again, caption over its middle
+  const narrow = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 50 } })
+  expect(await narrow.find({ type: 'Text', text: /Clear/ })).toBeUndefined()
+  expect(await narrow.find({ type: 'Text', text: /Lv\.\d+/ })).toBeDefined()
+  await narrow.unmount()
+})
+
+test('on the desktop the forecast rides on Clawd\'s line too', { plugins: [{ name: 'token-weather', register: weather }] }, async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  await $.turn.complete({ answer: 'done' } as never)
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop', props: { ...BAND.props, bodyColumns: 160 } })
+  expect(await ui.find({ type: 'Text', text: /Clear · 19%/ })).toBeDefined()
+  expect(await ui.find({ type: 'Svg' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Lv\.\d+/ })).toBeDefined()
+  await ui.unmount()
+})
