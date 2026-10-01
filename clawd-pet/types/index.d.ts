@@ -3,6 +3,6 @@ export type PetHosts = string[];
 
 declare module "claude-code" {
   interface PluginState {
-    "claude-pet": { hosts: PetHosts };
+    "clawd-pet": { hosts: PetHosts };
   }
 }

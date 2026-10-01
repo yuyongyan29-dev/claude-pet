@@ -1,7 +1,7 @@
 import type { ClientModule } from 'claude-code'
 
 /**
- * claude-pet's touch layer: an empty region over the band that tells the hooks module which
+ * clawd-pet's touch layer: an empty region over the band that tells the hooks module which
  * column was clicked; the module decides whether that was Clawd.
  */
 const Touch: ClientModule = (_props, surface) => {

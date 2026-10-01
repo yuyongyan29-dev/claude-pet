@@ -3,7 +3,7 @@ import type { Hook, Register, Timer } from 'claude-code'
 import { CLIPS, SPRITES } from './sprites'
 
 /**
- * claude-pet: Clawd strolling along the band above the prompt, drawn from the official
+ * clawd-pet: Clawd strolling along the band above the prompt, drawn from the official
  * clawd-quest sprites and played by the app's own clips, scheduled the way clawd-quest does.
  * Where the terminal shows pictures (Ghostty, kitty, iTerm2) Clawd is an Image, pixel for
  * pixel; elsewhere it is the block rendering below. A Client over the band takes clicks.
@@ -21,7 +21,7 @@ type Dollar = Parameters<Hook<'turn.complete'>>[0]
 
 const SLEEP_AFTER_MS = 3 * 60_000
 const TICK_MS = 83
-const RASTER_KEY = 'claude-pet'
+const RASTER_KEY = 'clawd-pet'
 const SIZE_MIN = 4
 const SIZE_MAX = 40
 const SIZE_DEFAULT = 9
@@ -903,7 +903,7 @@ const routines = () => ROUTINES.filter(([lv]) => lv <= levelOf(pet.xp)).map(([, 
 type Segment = { children: string; color?: string; bold?: boolean; dimColor?: boolean }
 type SideLine = { full: Segment[]; compact: Segment[] }
 const SIDE = { plugin: 'token-weather', key: 'line' } as const
-const HOSTS = { plugin: 'claude-pet', key: 'hosts' } as const
+const HOSTS = { plugin: 'clawd-pet', key: 'hosts' } as const
 const SIDE_GAP = 3 // a column of margin on the left, two between the line and Clawd's range
 const SIDE_SEP = ' │ ' // between the readout and Clawd's own caption on that line
 const PET_ROOM = 12 // columns Clawd keeps to stroll in, beyond its own width
@@ -999,7 +999,7 @@ function fitSide(line: SideLine | null, total: number): { segments: Segment[]; w
 
 async function save($: Dollar) {
   pet.savedAt = clockNow()
-  await $.store.set('pet', pet).catch(err => $.ui.log(`claude-pet: save failed: ${err}`))
+  await $.store.set('pet', pet).catch(err => $.ui.log(`clawd-pet: save failed: ${err}`))
 }
 
 // what Clawd plays between turns; the band is never shorter than the tallest of them
@@ -1097,7 +1097,7 @@ function refused($: Dollar, why: string) {
   hdRefusals += 1
   hd = false // blocks for now
   hdRetryAt = hdRefusals < HD_TRIES ? clockNow() + 60_000 : 0
-  $.ui.log(`claude-pet: pictures refused (${why}); blocks${hdRetryAt ? ', trying pictures again soon' : ''}`)
+  $.ui.log(`clawd-pet: pictures refused (${why}); blocks${hdRetryAt ? ', trying pictures again soon' : ''}`)
   $.ui.invalidate('ui.render')
 }
 
@@ -1495,7 +1495,7 @@ export const register: Register = on => {
   on('state.set', async ($, e, next) => {
     const r = await next(e)
     const w = e as unknown as { plugin: string; key: string; value: unknown }
-    if (w.plugin !== 'claude-pet' && follow(w.plugin, w.key, w.value)) {
+    if (w.plugin !== 'clawd-pet' && follow(w.plugin, w.key, w.value)) {
       $.ui.invalidate('ui.render')
       kick($)
     }

@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { Register } from 'claude-code'
 
 const BAND = {
-  plugin: 'claude-pet',
+  plugin: 'clawd-pet',
   surface: 'terminal',
   component: 'AbovePrompt',
   props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 100, scroll: { offset: 0, bodyRows: 20 }, view: {} },

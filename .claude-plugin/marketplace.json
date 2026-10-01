@@ -1,1 +1,14 @@
-{ "name": "claude-pet-market", "owner": { "name": "yanyan" }, "plugins": [ { "name": "claude-pet", "source": "./claude-pet", "description": "Clawd pet (local)" } ] }
+{
+  "name": "claude-pet-market",
+  "description": "Clawd, a pixel pet that lives above the Claude Code prompt",
+  "owner": {
+    "name": "yanyan"
+  },
+  "plugins": [
+    {
+      "name": "clawd-pet",
+      "source": "./clawd-pet",
+      "description": "Clawd pet (local)"
+    }
+  ]
+}

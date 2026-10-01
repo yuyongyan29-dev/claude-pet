@@ -3,7 +3,7 @@ import { expect, test } from 'claude-code/testing'
 type Engine = import('claude-code/testing').Engine
 
 const BAND = {
-  plugin: 'claude-pet',
+  plugin: 'clawd-pet',
   surface: 'terminal',
   component: 'AbovePrompt',
   props: { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 80, scroll: { offset: 0, bodyRows: 20 }, view: {} },

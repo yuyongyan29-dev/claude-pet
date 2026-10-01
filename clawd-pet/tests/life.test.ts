@@ -13,7 +13,7 @@ const props = (bodyColumns: number, isWorking = false) => ({
   view: {},
 })
 const band = (bodyColumns: number, surface: 'terminal' | 'desktop' = 'terminal', isWorking = false) =>
-  ({ plugin: 'claude-pet', surface, component: 'AbovePrompt', props: props(bodyColumns, isWorking) }) as const
+  ({ plugin: 'clawd-pet', surface, component: 'AbovePrompt', props: props(bodyColumns, isWorking) }) as const
 
 type Blit = { source?: { file?: string }; cells?: string }
 
