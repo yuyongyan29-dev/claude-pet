@@ -59,9 +59,10 @@ test('the forecast and Clawd\'s caption share one line; Clawd strolls from its e
   expect(await mid.find({ type: 'Text', text: /Clear │ / })).toBeDefined()
   await mid.unmount()
 
-  // too narrow for both: the band is Clawd's alone again, caption over its middle
+  // too narrow for both on one line: the forecast gets a line of its own above Clawd, never lost
   const narrow = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 50 } })
-  expect(await narrow.find({ type: 'Text', text: /Clear/ })).toBeUndefined()
+  expect(await narrow.find({ type: 'Text', text: /^☀ Clear · 19%/ })).toBeDefined()
+  expect(await narrow.find({ type: 'Text', text: /│/ })).toBeUndefined()
   expect(await narrow.find({ type: 'Text', text: /Lv\.\d+/ })).toBeDefined()
   await narrow.unmount()
 })
@@ -76,4 +77,32 @@ test('on the desktop the forecast rides on Clawd\'s line too', { plugins: [{ nam
   expect(await ui.find({ type: 'Svg' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Lv\.\d+/ })).toBeDefined()
   await ui.unmount()
+})
+
+// token-weather as it ships: the article's long line, which a ~105-column terminal cannot fit beside Clawd
+const articleWeather: Register = on => {
+  on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
+    const full = [
+      { color: 'yellow', bold: true, children: '☀  Clear' },
+      { children: '  19% of context' },
+      { dimColor: true, children: '  186.3k / 1M' },
+      { dimColor: true, children: '   last turns ' },
+      { color: 'yellow', children: '▁▂▃▆' },
+      { dimColor: true, children: '  ▲ +34.4k last turn' },
+    ]
+    await ($.state.set as any)({ plugin: 'token-weather', key: 'line' }, { full, compact: full.slice(0, 3) })
+    return r
+  })
+}
+
+test('the forecast never goes missing while Clawd hosts it, at any width', { plugins: [{ name: 'token-weather', register: articleWeather }] }, async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  await $.turn.complete({ answer: 'done' } as never)
+  for (const columns of [60, 90, 105, 120, 160, 200]) {
+    const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: columns } })
+    expect(await ui.find({ type: 'Text', text: /Clear  19% of context/ })).toBeDefined()
+    await ui.unmount()
+  }
 })

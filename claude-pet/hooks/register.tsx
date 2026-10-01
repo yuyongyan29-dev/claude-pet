@@ -881,7 +881,7 @@ const HOSTS = { plugin: 'claude-pet', key: 'hosts' } as const
 const SIDE_GAP = 3 // a column of margin on the left, two between the line and Clawd's range
 const SIDE_SEP = ' │ ' // between the readout and Clawd's own caption on that line
 const PET_ROOM = 12 // columns Clawd keeps to stroll in, beyond its own width
-const CAP_ROOM = 26 // columns kept for what Clawd is doing, so its range holds still as that changes
+const CAP_ROOM = 18 // columns kept for what Clawd is doing when deciding if the line fits (it is cut past that)
 
 /** Tells token-weather whether Clawd draws its line (and so it should not draw its own). */
 async function syncHosts($: Dollar) {
@@ -1482,16 +1482,33 @@ export const register: Register = on => {
     const color = noteNow() ? noteColor : CAPTION_COLOR[shownMood]
     const below = await next(e)
 
-    // the readout (token-weather) rides on Clawd's line on both surfaces
-    const side = fitSide(sideCache, Math.max(20, Math.min(512, e.props.bodyColumns)))
-    const runs = side.segments.map(seg => {
-      const { Text } = $.ui.resolve(e)
-      return (
-        <Text color={seg.color} bold={seg.bold} dimColor={seg.dimColor}>
-          {seg.children}
-        </Text>
-      )
-    })
+    // the readout (token-weather) rides on Clawd's line on both surfaces; where that line has no
+    // room it gets a line of its own above Clawd, so it shows whenever Clawd hosts it
+    const total = Math.max(20, Math.min(512, e.props.bodyColumns))
+    const side = fitSide(sideCache, total)
+    const runsOf = (segments: Segment[]) =>
+      segments.map(seg => {
+        const { Text } = $.ui.resolve(e)
+        return (
+          <Text color={seg.color} bold={seg.bold} dimColor={seg.dimColor}>
+            {seg.children}
+          </Text>
+        )
+      })
+    const runs = runsOf(side.segments)
+    const alone =
+      side.width === 0 && sideCache
+        ? (() => {
+            const { Box, Text } = $.ui.resolve(e)
+            const fits = (segments: Segment[]) => segments.reduce((w, seg) => w + widthOf(seg.children), 0) + 2 <= total
+            const segments = fits(sideCache.full) ? sideCache.full : sideCache.compact
+            return (
+              <Box paddingLeft={1}>
+                <Text wrap="truncate">{runsOf(segments)}</Text>
+              </Box>
+            )
+          })()
+        : null
     if (e.surface === 'desktop') {
       // the desktop plays each clip as an SVG; a new clip, a step along or a new line is a redraw.
       // Clawd's range: what the band's width leaves after the readout, its picture and its caption
@@ -1504,6 +1521,7 @@ export const register: Register = on => {
       const { Box, Text, Svg } = $.ui.resolve(e)
       return (
         <Box flexDirection="column">
+          {alone}
           <Box flexDirection="row" columnGap={1} alignItems="flex-end">
             {side.width > 0 && <Text>{runs}</Text>}
             <Box width={Math.round(x)} />
@@ -1556,7 +1574,8 @@ export const register: Register = on => {
       </Text>
     )
     keepInRange()
-    if (rows < 1) return side.width ? <Box flexDirection="column">{below}<Box paddingLeft={1}>{readout}</Box></Box> : below
+    if (rows < 1)
+      return side.width ? <Box flexDirection="column">{below}<Box paddingLeft={1}>{readout}</Box></Box> : <Box flexDirection="column">{below}{alone}</Box>
     band = { requestId: e.requestId, cols, rows, maxRows, x: Math.round(x), hop: hopRows(liftAt(Math.round(x))) }
     const f = frameNow(now)
     const flip = facing < 0
@@ -1566,6 +1585,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {below}
+        {alone}
         <Box width={cols} height={rows}>
           {pic ? (
             // kept inside Clawd's range: a picture blanks its whole box, and a readout may sit left of it
