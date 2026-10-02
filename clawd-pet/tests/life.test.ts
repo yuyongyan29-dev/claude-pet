@@ -168,6 +168,19 @@ test('pictures that keep failing at start come back by themselves, no /pet hd ne
   await ui.unmount()
 })
 
+test('a resumed session whose terminal was only just asked stays a picture, never blocks', async ($, on) => {
+  const { clock } = world(on, { refuse: n => (n <= 3 ? 'the terminal has not yet said whether it reads files on this machine; asked now, blit again' : undefined) })
+  await boot($)
+  const ui = await $.ui.mount(band(120))
+  let rasters = 0
+  for (let i = 0; i < 20; i++) {
+    await clock.advance(500)
+    rasters += (await ui.findAll({ type: 'Raster' })).length
+  }
+  expect(rasters).toBe(0)
+  await ui.unmount()
+})
+
 // the other mods, as far as Clawd follows them: their state writes
 // the other mods as far as Clawd follows them: each writes its own value, named where it writes
 const tokenWeather: Register = on => {

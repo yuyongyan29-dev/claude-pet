@@ -1272,10 +1272,10 @@ function kick($: Dollar) {
 /** A picture the terminal would not take: why decides whether that is for now or for good. */
 function refused($: Dollar, why: string) {
   if (/no Image of its own is mounted|not mounted/i.test(why)) return // between drawings
-  if (/not asked yet/i.test(why)) {
-    // the terminal (Ghostty) has not been asked about pictures yet: stay a picture, which shows
-    // once it has, never blocks in between
-    $.clock.after(3_000, () => $.ui.invalidate('ui.render'))
+  if (/not asked yet|has not yet said|blit again/i.test(why)) {
+    // the terminal (Ghostty) has not been asked about pictures yet, or has just been asked (a new or
+    // resumed session): stay a picture, which shows once it answers, never blocks in between
+    $.clock.after(/blit again/i.test(why) ? 500 : 3_000, () => $.ui.invalidate('ui.render'))
     return
   }
   hdRefusals += 1
