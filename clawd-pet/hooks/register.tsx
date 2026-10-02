@@ -367,6 +367,8 @@ const svgTop = () => (hatOn() ? 26 : 31.5) - SVG_ROWS / 2
 // on the desktop: Clawd drawn 1.3x, centred on a lane only as tall as it was (LANE_PX), so the band
 // keeps its height; the frame's empty sky and floor reach into the band's own padding
 const DESKTOP_SCALE = 1.3
+// beside hud-pane's two rows the card is three rows tall, and Clawd stands as tall as the text block
+const DESKTOP_HUD_SCALE = 2.4
 const LANE_PX = 34
 const LANE_SPACER = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${LANE_PX}"/>`
 const svgCache: Record<string, string> = {}
@@ -1749,7 +1751,8 @@ export const register: Register = on => {
       // and centred on it, so neither its size nor its walk moves the text or grows the band.
       // A new clip, a step along or a new caption is a redraw.
       const { Box, Text, Svg } = $.ui.resolve(e)
-      const petPx = Math.round(CW * DESKTOP_SCALE)
+      const scale = hudRows.length > 0 ? DESKTOP_HUD_SCALE : DESKTOP_SCALE
+      const petPx = Math.round(CW * scale)
       const petCells = Math.ceil(petPx / DESKTOP_CELL_PX)
       const widthOfRuns = (segments: Segment[]) => segments.reduce((w, seg) => w + widthOf(seg.children), 0)
       // the text never gives way: the full readout while Clawd keeps a lane of at least 12 cells
@@ -1760,40 +1763,53 @@ export const register: Register = on => {
       rangeRight = Math.max(0, Math.min(DESKTOP_RANGE, total - textCells(readout) - petCells - 2))
       keepInRange()
       desktop = { at: Math.round(x), caption: captionText() }
-      return (
-        <Box flexDirection="column">
-          {hudRows.length > 0 && (
-            // hud-pane's rows above Clawd's line: the desktop card has no blank rows and clips what
-            // spills, so here (the one exception) the band grows by these rows
-            <Box flexDirection="column" flexShrink={0}>
-              {hudRows.map(row => (
-                <Text wrap="truncate">{runsOf(row)}</Text>
-              ))}
+      // the lane where Clawd strolls: beside the one text row, or beside the whole block with hud-pane's rows
+      const lane = (
+        <Box position="relative" flexGrow={1} flexShrink={1} minWidth={0}>
+          <Svg source={LANE_SPACER} alt="" width={1} height={LANE_PX} />
+          <Box position="absolute" top={0} bottom={0} left={Math.round(x)} alignItems="center" justifyContent="center" overflow="visible">
+            <Svg key={`pet-${playing}-${playingAt}`} source={svg(playing, facing < 0)} alt={`${nameOf()}: ${caption}`} width={petPx} height={Math.round(SVG_ROWS * scale)} />
+          </Box>
+        </Box>
+      )
+      const line = (
+        <Box flexDirection="row" columnGap={1} alignItems="center">
+          {readout.length > 0 && (
+            <Box flexShrink={0}>
+              <Text wrap="truncate">{runsOf(readout)}</Text>
             </Box>
           )}
-          <Box flexDirection="row" columnGap={1} alignItems="center">
-            {readout.length > 0 && (
-              <Box flexShrink={0}>
-                <Text wrap="truncate">{runsOf(readout)}</Text>
-              </Box>
-            )}
-            {readout.length > 0 && <Text dimColor>│</Text>}
-            <Box flexShrink={0}>
-              <Text wrap="truncate">
-                <Text bold color="#d97757">{nameOf()}</Text>
-                <Text dimColor> Lv.{levelNow()} </Text>
-                <Text color="#efb154">{titleOf(levelNow())}</Text>
-                <Text dimColor> · </Text>
-                <Text color={color}>{caption}</Text>
-              </Text>
-            </Box>
-            <Box position="relative" flexGrow={1} flexShrink={1} minWidth={0}>
-              <Svg source={LANE_SPACER} alt="" width={1} height={LANE_PX} />
-              <Box position="absolute" top={0} bottom={0} left={Math.round(x)} alignItems="center" justifyContent="center" overflow="visible">
-                <Svg key={`pet-${playing}-${playingAt}`} source={svg(playing, facing < 0)} alt={`${nameOf()}: ${caption}`} width={petPx} height={Math.round(SVG_ROWS * DESKTOP_SCALE)} />
-              </Box>
-            </Box>
+          {readout.length > 0 && <Text dimColor>│</Text>}
+          <Box flexShrink={0}>
+            <Text wrap="truncate">
+              <Text bold color="#d97757">{nameOf()}</Text>
+              <Text dimColor> Lv.{levelNow()} </Text>
+              <Text color="#efb154">{titleOf(levelNow())}</Text>
+              <Text dimColor> · </Text>
+              <Text color={color}>{caption}</Text>
+            </Text>
           </Box>
+          {hudRows.length === 0 && lane}
+        </Box>
+      )
+      return (
+        <Box flexDirection="column">
+          {hudRows.length > 0 ? (
+            // hud-pane's rows above Clawd's line: the desktop card has no blank rows and clips what
+            // spills, so here (the one exception) the band grows by these rows; Clawd strolls beside
+            // the whole block, drawn as tall as it
+            <Box flexDirection="row" columnGap={1}>
+              <Box flexDirection="column" flexShrink={0}>
+                {hudRows.map(row => (
+                  <Text wrap="truncate">{runsOf(row)}</Text>
+                ))}
+                {line}
+              </Box>
+              {lane}
+            </Box>
+          ) : (
+            line
+          )}
           {below}
         </Box>
       )
