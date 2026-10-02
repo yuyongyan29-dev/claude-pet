@@ -141,14 +141,17 @@ test('squeezed by a notice above, the band leaves hud-pane\'s rows out', { plugi
   await ui.unmount()
 })
 
-test('on the desktop hud-pane\'s rows sit just above Clawd\'s line, laid over what is above', { plugins: [{ name: 'token-weather', register: weather }, { name: 'hud-pane', register: hud }] }, async ($, on) => {
+test('on the desktop hud-pane\'s rows sit just above Clawd\'s line, inside the card', { plugins: [{ name: 'token-weather', register: weather }, { name: 'hud-pane', register: hud }] }, async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
   await $.turn.complete({ answer: 'done' } as never)
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop', props: { ...BAND.props, bodyColumns: 160 } })
   expect(await ui.find({ type: 'Text', text: /LOS ANGELES \| ☀️ 33°C/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /demo git:\(main\)/ })).toBeDefined()
-  const box = (await ui.findAll({ type: 'Box' })).find(b => b.props.position === 'absolute' && b.props.top === -2)
-  expect(box).toBeDefined()
+  // in the flow, not laid over: the card clips whatever spills past its edge
+  const hudText = await ui.find({ type: 'Text', text: /demo git:\(main\)/ })
+  const boxes = await ui.findAll({ type: 'Box' })
+  expect(boxes.some(b => b.props.position === 'absolute' && (b.props.top as number) < 0)).toBe(false)
+  expect(hudText).toBeDefined()
   await ui.unmount()
 })

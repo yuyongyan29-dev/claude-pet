@@ -1762,15 +1762,16 @@ export const register: Register = on => {
       desktop = { at: Math.round(x), caption: captionText() }
       return (
         <Box flexDirection="column">
+          {hudRows.length > 0 && (
+            // hud-pane's rows above Clawd's line: the desktop card has no blank rows and clips what
+            // spills, so here (the one exception) the band grows by these rows
+            <Box flexDirection="column" flexShrink={0}>
+              {hudRows.map(row => (
+                <Text wrap="truncate">{runsOf(row)}</Text>
+              ))}
+            </Box>
+          )}
           <Box flexDirection="row" columnGap={1} alignItems="center">
-            {hudRows.length > 0 && (
-              // hud-pane's rows, laid over the rows just above Clawd's line (absolute: the band keeps its size)
-              <Box position="absolute" top={-hudRows.length} left={0} right={0} flexDirection="column">
-                {hudRows.map(row => (
-                  <Text wrap="truncate">{runsOf(row)}</Text>
-                ))}
-              </Box>
-            )}
             {readout.length > 0 && (
               <Box flexShrink={0}>
                 <Text wrap="truncate">{runsOf(readout)}</Text>
