@@ -367,8 +367,8 @@ const svgTop = () => (hatOn() ? 26 : 31.5) - SVG_ROWS / 2
 // on the desktop: Clawd drawn 1.3x, centred on a lane only as tall as it was (LANE_PX), so the band
 // keeps its height; the frame's empty sky and floor reach into the band's own padding
 const DESKTOP_SCALE = 1.3
-// beside hud-pane's two rows the card is three rows tall, and Clawd stands as tall as the text block
-const DESKTOP_HUD_SCALE = 2.4
+// beside hud-pane's two rows the card is three rows tall; Clawd is drawn a little larger than beside one row
+const DESKTOP_HUD_SCALE = 1.8
 const LANE_PX = 34
 const LANE_SPACER = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${LANE_PX}"/>`
 const svgCache: Record<string, string> = {}
