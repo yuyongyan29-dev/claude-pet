@@ -1763,6 +1763,14 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" columnGap={1} alignItems="center">
+            {hudRows.length > 0 && (
+              // hud-pane's rows, laid over the rows just above Clawd's line (absolute: the band keeps its size)
+              <Box position="absolute" top={-hudRows.length} left={0} right={0} flexDirection="column">
+                {hudRows.map(row => (
+                  <Text wrap="truncate">{runsOf(row)}</Text>
+                ))}
+              </Box>
+            )}
             {readout.length > 0 && (
               <Box flexShrink={0}>
                 <Text wrap="truncate">{runsOf(readout)}</Text>
