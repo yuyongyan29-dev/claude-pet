@@ -155,3 +155,17 @@ test('on the desktop hud-pane\'s rows sit just above Clawd\'s line, inside the c
   expect(hudText).toBeDefined()
   await ui.unmount()
 })
+
+test('Clawd strolls right of hud-pane\'s rows, never under them', { plugins: [{ name: 'token-weather', register: weather }, { name: 'hud-pane', register: hud }] }, async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  await $.turn.complete({ answer: 'done' } as never)
+  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 160 } })
+  const widest = '🇺🇸 LOS ANGELES | ☀️ 33°C | 13:45 | [Opus 5.5 ○ low]'.length
+  const raster = (await ui.findAll({ type: 'Raster' }))[0]
+  const picture = (await ui.findAll({ type: 'Box' })).find(b => b.props.position === 'absolute' && (b.children as { type?: string }[] | undefined)?.[0]?.type === 'Image')
+  const left = raster ? leftmostCell(raster) : Number(picture?.props.left)
+  expect(Number.isFinite(left)).toBe(true)
+  expect(left).toBeGreaterThanOrEqual(1 + widest)
+  await ui.unmount()
+})

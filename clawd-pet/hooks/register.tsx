@@ -1831,6 +1831,10 @@ export const register: Register = on => {
       ? Math.min(side.width - SIDE_GAP, side.segments.reduce((w, seg) => w + widthOf(seg.children), 0) + widthOf(SIDE_SEP) + widthOf(text))
       : 0
     minX = side.width ? Math.min(1 + lineWidth + 2, Math.max(0, cols - sizeOf() - 1)) : 0
+    // hud-pane's rows sit at the left above the readout: Clawd strolls only to the right of them, so
+    // neither covers the other
+    const hudWidth = hudRows.reduce((w, row) => Math.max(w, row.reduce((n, seg) => n + widthOf(seg.children), 0)), 0)
+    if (hudWidth) minX = Math.max(minX, Math.min(1 + hudWidth + 2, Math.max(0, cols - sizeOf() - 1)))
     rangeRight = cols - sizeOf() - 1
     const fullRows = bandRows(now)
     const rows = Math.min(fullRows, maxRows)
