@@ -154,6 +154,20 @@ test('a terminal without pictures gets blocks, and pictures are tried again late
   await ui.unmount()
 })
 
+test('pictures that keep failing at start come back by themselves, no /pet hd needed', async ($, on) => {
+  // the terminal refuses pictures for ten minutes (past the quick retries), then takes them
+  let refusing = true
+  const { clock } = world(on, { refuse: () => (refusing ? 'the Image draws its alt here: the terminal draws no placeholder images' : undefined) })
+  await boot($)
+  const ui = await $.ui.mount(band(120))
+  for (let i = 0; i < 20; i++) await clock.advance(30_000)
+  expect((await ui.findAll({ type: 'Raster' })).length).toBe(1) // blocks meanwhile
+  refusing = false
+  for (let i = 0; i < 24; i++) await clock.advance(30_000)
+  expect((await ui.findAll({ type: 'Raster' })).length).toBe(0) // a picture again
+  await ui.unmount()
+})
+
 // the other mods, as far as Clawd follows them: their state writes
 // the other mods as far as Clawd follows them: each writes its own value, named where it writes
 const tokenWeather: Register = on => {

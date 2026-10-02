@@ -670,7 +670,8 @@ const hdOn = () => hd
 // that passes; only a terminal that keeps refusing keeps the blocks.
 let hdRetryAt = 0
 let hdRefusals = 0
-const HD_TRIES = 3
+const HD_TRIES = 3 // quick retries, a minute apart; slower ones after that
+const HD_RETRY_LATER_MS = 5 * 60_000
 function retryPictures(now: number): boolean {
   if (hd || hdRetryAt === 0 || now < hdRetryAt) return false
   hd = true
@@ -1279,8 +1280,10 @@ function refused($: Dollar, why: string) {
   }
   hdRefusals += 1
   hd = false // blocks for now
-  hdRetryAt = hdRefusals < HD_TRIES ? clockNow() + 60_000 : 0
-  $.ui.log(`clawd-pet: pictures refused (${why}); blocks${hdRetryAt ? ', trying pictures again soon' : ''}`)
+  // never for good: a terminal that refused at start (a new or resumed session) often takes pictures
+  // a little later, so try again after a minute, then every few minutes, with no /pet hd needed
+  hdRetryAt = clockNow() + (hdRefusals < HD_TRIES ? 60_000 : HD_RETRY_LATER_MS)
+  $.ui.log(`clawd-pet: pictures refused (${why}); blocks, trying pictures again soon`)
   $.ui.invalidate('ui.render')
 }
 
@@ -1577,6 +1580,10 @@ export const register: Register = on => {
       await save($)
     }
     delete pet.hd // the old blocks-or-pictures choice: pictures always now
+    // a new or resumed session starts from pictures, whatever an earlier one fell back to
+    hd = true
+    hdRefusals = 0
+    hdRetryAt = 0
     // pictures need the frames made ahead; without them, blocks
     if (!(await $.fs.exists(`${$.plugin.root}/frames/Swaying/0.png`).catch(() => false))) hd = false
     await readTokens($)
