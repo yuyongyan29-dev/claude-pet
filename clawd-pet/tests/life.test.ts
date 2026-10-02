@@ -21,10 +21,17 @@ type Blit = { source?: { file?: string }; cells?: string }
  * The world beneath Clawd on a mock clock: a store, the frames on disk, a terminal that takes
  * pictures (or refuses them as `refuse` says), the hour `date` answers. Returns what was blitted.
  */
-function world(on: On, opts: { refuse?: (n: number) => string | undefined; hour?: string; xp?: number } = {}) {
+function world(on: On, opts: { refuse?: (n: number) => string | undefined; hour?: string; tokens?: number } = {}) {
   const clock = mock.clock(on, { now: 1_700_000_000_000 })
-  const saved = { food: 80, love: 60, xp: opts.xp ?? 0, hidden: false, savedAt: 1_700_000_000_000, size: 9, name: 'Clawd', merged: true }
-  mock.store(on, opts.xp === undefined ? undefined : { pet: saved })
+  const saved = { food: 80, love: 60, xp: 0, hidden: false, savedAt: 1_700_000_000_000, size: 9, name: 'Clawd', merged: true }
+  mock.store(on, opts.tokens === undefined ? undefined : { pet: saved })
+  // the level is lifetime tokens: stats-cache.json counts them, one level per 一亿
+  const stats = { lastComputedDate: '2023-11-13', dailyModelTokens: [{ date: '2023-11-13', tokensByModel: { 'claude-opus-5': opts.tokens ?? 0 } }] }
+  on('env.get', async (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/me' : undefined }) as never)
+  on('fs.read', async (_$: any, e: any) => ({ value: JSON.stringify(stats), path: e.path }) as never)
+  // no shared save yet: the pet comes from the plugin's store, and saves go nowhere
+  on('fs.exists', async (_$: any, e: any) => ({ value: !String(e.path).endsWith('clawd-pet.json') }) as never)
+  on('fs.write', async () => ({ value: undefined }) as never)
   const blits: Blit[] = []
   const toasts: string[] = []
   on('ui.toast', async (_$: any, e: any) => {
@@ -32,7 +39,6 @@ function world(on: On, opts: { refuse?: (n: number) => string | undefined; hour?
     return { value: undefined } as never
   })
   on('session.start', async (_$: any, e: any) => ({ cwd: e.cwd }) as never)
-  on('fs.exists', async () => ({ value: true }) as never)
   on('command.register', async () => ({ value: { command: 'pet' } }) as never)
   on('process.run', async () => ({ value: { exitCode: 0, stdout: `${opts.hour ?? '14'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as never)
   on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
@@ -90,24 +96,31 @@ test('the range follows the width, and a walk cut short by a resize does not get
   await ui.unmount()
 })
 
-test('on the desktop the range follows the window too', async ($, on) => {
+test('on the desktop Clawd strolls a lane after the text: at most 40 cells, less when the window is narrow', async ($, on) => {
   const { clock } = world(on)
   await boot($)
-  // Clawd's spot on the row: the spacer before its picture
-  const spacer = async (cols: number, run: boolean) => {
+  // Clawd's spot: the left of the absolute Box it floats in, inside its lane
+  const spot = async (cols: number) => {
     const ui = await $.ui.mount(band(cols, 'desktop'))
-    if (run) await pet($, 'run') // from the left edge, a dash to the far one
-    await clock.advance(run ? 20_000 : 1_000)
-    const row = (await ui.findAll({ type: 'Box' })).find(b => b.props.flexDirection === 'row')
-    const width = Number((row?.children as any[] | undefined)?.find((c: any) => c.type === 'Box')?.props.width)
+    await pet($, 'run') // a lap of the lane: out to its far end and back
+    let left = 0
+    let fixed = 0
+    for (let i = 0; i < 40; i++) {
+      await clock.advance(500)
+      const boxes = await ui.findAll({ type: 'Box' })
+      left = Math.max(left, Number(boxes.find(b => b.props.position === 'absolute')?.props.left ?? 0))
+      fixed = boxes.filter(b => b.props.flexShrink === 0).length // the text never gives way
+    }
     await ui.unmount()
-    return width
+    return { left, fixed }
   }
-  const wide = await spacer(220, true)
-  const narrow = await spacer(110, false) // the window narrows with Clawd at the far edge
-  expect(wide).toBeGreaterThan(80) // no longer held to 80 columns
-  expect(narrow).toBeLessThan(wide)
-  expect(narrow).toBeLessThanOrEqual(110 - 12 - 4)
+  const wide = await spot(220)
+  // narrow enough that the window, not DESKTOP_RANGE, ends the lane (at 90 a short caption still leaves 40)
+  const narrow = await spot(60)
+  expect(wide.left).toBeGreaterThan(20)
+  expect(wide.left).toBeLessThanOrEqual(40)
+  expect(narrow.left).toBeLessThan(wide.left)
+  expect(wide.fixed).toBeGreaterThanOrEqual(1)
 })
 
 test('a terminal not asked about pictures yet never gets blocks', async ($, on) => {
@@ -229,7 +242,7 @@ const LV1 = new Set(['Swaying', 'LookingAround', 'LookingAroundEyesOnly', 'Turni
 const BIG = new Set(['DancingHappy', 'BreakDancing', 'Hula', 'Jumping', 'Confetti', 'Spark'])
 
 test('at Lv.1 Clawd only does what it has learned', async ($, on) => {
-  const { clock, blits } = world(on, { xp: 0 })
+  const { clock, blits } = world(on, { tokens: 0 })
   await boot($)
   const ui = await $.ui.mount(band(160))
   await clock.advance(150_000)
@@ -240,7 +253,7 @@ test('at Lv.1 Clawd only does what it has learned', async ($, on) => {
 })
 
 test('at Lv.10 the big moves come up', async ($, on) => {
-  const { clock, blits } = world(on, { xp: 1620 })
+  const { clock, blits } = world(on, { tokens: 1_000_000_000 })
   await boot($)
   const ui = await $.ui.mount(band(160))
   // three stretches of idling, each woken first so Clawd does not doze off
@@ -254,26 +267,26 @@ test('at Lv.10 the big moves come up', async ($, on) => {
 })
 
 test('a trick waits for its level, and stats say what comes next', async ($, on) => {
-  world(on, { xp: 404 })
+  world(on, { tokens: 520_000_000 })
   await boot($)
   const locked = await pet($, 'spark')
   expect(locked.text).toContain('learns spark at Lv.8')
   const open = await pet($, 'breakdance')
   expect(open.text).toContain('check out my moves')
   const stats = (await pet($, 'stats')).text ?? ''
-  expect(stats).toContain('Lv.5 Dancer (xp 404 · Lv.6 at 500)')
+  expect(stats).toContain('Lv.5 Dancer (5.2亿 tokens · Lv.6 at 6亿)')
   expect(stats).toContain('Lv.6 brings spinning till dizzy, confetti')
 })
 
 test('a level up says what Clawd learned', async ($, on) => {
-  const { toasts } = world(on, { xp: 495 })
+  const { toasts } = world(on, { tokens: 599_000_000 })
   await boot($)
-  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1' } as never)
+  await $.turn.complete({ reason: 'answer', answer: 'ok', durationMs: 1, isAborted: false, turnId: 't1', usage: { model: 'claude-opus-5', input_tokens: 10, output_tokens: 990, cache_read_input_tokens: 1_500_000, cache_creation_input_tokens: 0 } } as never)
   expect(toasts.join(' ')).toContain('reached Lv.6! Learned spinning till dizzy, confetti.')
 })
 
 test('the title rides beside the name, all the time', async ($, on) => {
-  const { clock } = world(on, { xp: 404 })
+  const { clock } = world(on, { tokens: 520_000_000 })
   await boot($)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount(band(160, surface))
@@ -284,7 +297,7 @@ test('the title rides beside the name, all the time', async ($, on) => {
 })
 
 test('at work Clawd stays lively: many moves across a busy turn', async ($, on) => {
-  const { clock, blits } = world(on, { xp: 404 })
+  const { clock, blits } = world(on, { tokens: 520_000_000 })
   await boot($)
   await $.prompt.submit({ text: 'hi' } as never)
   const ui = await $.ui.mount(band(160, 'terminal', true))
@@ -307,5 +320,83 @@ test('at work Clawd stays lively: many moves across a busy turn', async ($, on) 
   expect(switches).toBeGreaterThanOrEqual(35)
   expect(desk).toBeLessThan(0.6)
   expect(seen.has('Laptop') || seen.has('Desktop')).toBe(true) // still gets work done at the desk
+  await ui.unmount()
+})
+
+test('the level has no cap: one per 一亿 tokens, every move past Lv.10', async ($, on) => {
+  world(on, { tokens: 20_586_000_000 })
+  await boot($)
+  const stats = (await pet($, 'stats')).text ?? ''
+  expect(stats).toContain('Lv.205 Cosmic (205.9亿 tokens · Lv.206 at 206亿)')
+  expect(stats).toContain('moves: 31/31 learned · all of them!')
+})
+
+test('past Legend the titles keep coming: Mythic at Lv.50, Celestial at Lv.100', async ($, on) => {
+  world(on, { tokens: 5_000_000_000 })
+  await boot($)
+  expect((await pet($, 'stats')).text ?? '').toContain('Lv.50 Mythic')
+})
+
+test('Celestial at Lv.100', async ($, on) => {
+  world(on, { tokens: 10_050_000_000 })
+  await boot($)
+  expect((await pet($, 'stats')).text ?? '').toContain('Lv.100 Celestial')
+})
+
+test('from Lv.10 Clawd shows off at work too: big moves between bouts at the desk', async ($, on) => {
+  const { clock, blits } = world(on, { tokens: 20_586_000_000 })
+  await boot($)
+  await $.prompt.submit({ text: 'hi' } as never)
+  const ui = await $.ui.mount(band(160, 'terminal', true))
+  const calls = [
+    { tool: 'Edit', input: { file_path: '/repo/a.ts', old_string: 'a', new_string: 'b' } },
+    { tool: 'Bash', input: { command: 'npm run build', description: 'Build' } },
+  ]
+  for (let i = 0; i < 36; i++) {
+    await $.tool.call(calls[i % calls.length] as never)
+    await clock.advance(5_000)
+  }
+  const big = new Set(blits.map(spriteOf).filter(s => s && BIG.has(s)))
+  expect(big.size).toBeGreaterThanOrEqual(2)
+  await ui.unmount()
+})
+
+test('titles keep going: Hero at Lv.20', async ($, on) => {
+  world(on, { tokens: 2_000_000_000 })
+  await boot($)
+  expect((await pet($, 'stats')).text ?? '').toContain('Lv.20 Hero')
+})
+
+test('/pet hat puts a hat on: the pictures come from frames-hat, and off takes it off', async ($, on) => {
+  const { clock, blits } = world(on, { tokens: 0 })
+  await boot($)
+  const ui = await $.ui.mount(band(160))
+  expect((await pet($, 'hat wizard')).text).toContain('put on the wizard hat')
+  await clock.advance(5_000)
+  const worn = blits.map(b => b.source?.file ?? '').filter(Boolean)
+  expect(worn.at(-1)).toMatch(/\/frames-hat\/wizard\/\w+\/\d+m?\.png$/)
+  expect((await pet($, 'hat')).text).toContain('wears a wizard hat')
+  expect((await pet($, 'hat top')).text).toContain('put on the top hat')
+  expect((await pet($, 'hat pirate')).text).toContain('No hat called pirate')
+  expect((await pet($, 'hat off')).text).toContain('took its hat off')
+  const before = blits.length
+  await clock.advance(5_000)
+  expect(blits.slice(before).map(b => b.source?.file ?? '').filter(Boolean).at(-1)).toMatch(/\/frames\/\w+\/\d+m?\.png$/)
+  await ui.unmount()
+})
+
+test('a hat drawn as blocks too, where the terminal shows no pictures', async ($, on) => {
+  const { clock, blits } = world(on, { tokens: 0, refuse: () => 'no pictures here' })
+  await boot($)
+  const ui = await $.ui.mount(band(160))
+  await clock.advance(3_000)
+  const bare = blits.filter(b => b.cells).at(-1)?.cells ?? ''
+  await pet($, 'hat crown')
+  await clock.advance(3_000)
+  const crowned = blits.filter(b => b.cells).at(-1)?.cells ?? ''
+  expect(crowned).not.toEqual(bare)
+  // the cells are base64 bytes; the crown's gold (#f5c542) is among their colours
+  const bytes = [...atob(crowned)].map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
+  expect(bytes).toMatch(/42c5f5|f5c542/)
   await ui.unmount()
 })

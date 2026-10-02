@@ -106,3 +106,37 @@ test('the forecast never goes missing while Clawd hosts it, at any width', { plu
     await ui.unmount()
   }
 })
+
+// hud-pane as far as Clawd cares: two rows of Text runs it publishes after each turn
+const hud: Register = on => {
+  on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
+    const rows = [
+      [{ dimColor: true, children: '🇺🇸 LOS ANGELES | ☀️ 33°C | 13:45 | ' }, { color: 'cyan', children: '[Opus 5.5 ○ low]' }],
+      [{ color: 'yellow', children: 'demo' }, { color: 'magenta', children: ' git:(main)' }],
+    ]
+    await ($.state.set as any)({ plugin: 'hud-pane', key: 'rows' }, rows)
+    return r
+  })
+}
+
+test('hud-pane\'s two rows sit just above the readout, laid over the band', { plugins: [{ name: 'token-weather', register: weather }, { name: 'hud-pane', register: hud }] }, async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  await $.turn.complete({ answer: 'done' } as never)
+  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 160 } })
+  expect(await ui.find({ type: 'Text', text: /LOS ANGELES \| ☀️ 33°C/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /demo git:\(main\)/ })).toBeDefined()
+  const box = (await ui.findAll({ type: 'Box' })).find(b => b.props.position === 'absolute' && b.props.bottom === 1)
+  expect(box).toBeDefined()
+  await ui.unmount()
+})
+
+test('squeezed by a notice above, the band leaves hud-pane\'s rows out', { plugins: [{ name: 'token-weather', register: weather }, { name: 'hud-pane', register: hud }] }, async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  await $.turn.complete({ answer: 'done' } as never)
+  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 160, maxRows: 4 } })
+  expect(await ui.find({ type: 'Text', text: /demo git:\(main\)/ })).toBeUndefined()
+  await ui.unmount()
+})

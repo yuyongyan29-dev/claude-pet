@@ -1,5 +1,6 @@
 import type { Hook, Register, Timer } from 'claude-code'
 
+import { HATS, HEADS } from './hats'
 import { CLIPS, SPRITES } from './sprites'
 
 /**
@@ -15,7 +16,7 @@ import { CLIPS, SPRITES } from './sprites'
  * frames are repainted in place with $.ui.blit. Everything else is a /pet subcommand.
  */
 
-type Pet = { food: number; love: number; xp: number; hidden: boolean; savedAt: number; size?: number; name?: string; still?: boolean; merged?: boolean; hd?: boolean; sound?: boolean }
+type Pet = { food: number; love: number; xp: number; hidden: boolean; savedAt: number; size?: number; name?: string; still?: boolean; merged?: boolean; hd?: boolean; sound?: boolean; hat?: string }
 type Mood = 'think' | 'search' | 'edit' | 'shell' | 'agent' | 'work' | 'idle' | 'sleep' | 'hungry' | 'alarm' | 'ask' | 'watch' | 'crowded'
 type Dollar = Parameters<Hook<'turn.complete'>>[0]
 
@@ -37,6 +38,7 @@ const TIRED_MS = 3 * 60_000 // and past this Clawd starts to flag
 const ASK_MS = 60_000 // how long Clawd keeps waving for an answer nobody gave
 const CROWDED = 90 // context window percent where Clawd gets nervous (token-weather's "Compact soon")
 const DESKTOP_CELL_PX = 8 // a desktop cell is about this wide, to size Clawd's picture in cells
+const DESKTOP_RANGE = 40 // on the desktop Clawd strolls this many cells past its caption, no further
 // --- the canvas every frame is placed on: Clawd's 24x16 body with its feet at (AX, AY) ---
 const CW = 48
 const CH = 40
@@ -50,7 +52,8 @@ const decoded: Record<string, Anim> = {}
 
 /** Base frame plus deltas to full frames on the shared canvas; 255 is transparent. */
 function anim(name: string): Anim {
-  const hit = decoded[name]
+  const key = `${name}|${hatOn() ?? ''}`
+  const hit = decoded[key]
   if (hit) return hit
   const t = SPRITES[name]!
   const a = t.a0[2]! > 0 ? t.a0 : [0, 0, t.w, t.h]
@@ -80,9 +83,46 @@ function anim(name: string): Anim {
   }
   const colors = t.palette.map(c => parseInt(c.slice(1), 16))
   const dark = new Set(colors.map((c, i) => (((c >> 16) & 255) + ((c >> 8) & 255) + (c & 255) < 120 ? i : -1)).filter(i => i >= 0))
+  const hat = hatOn()
+  if (hat) wear(frames, colors, HATS[hat]!, HEADS[name] ?? [])
   const made = { name, fps: t.fps, colors, dark, frames, same }
-  decoded[name] = made
+  decoded[key] = made
   return made
+}
+
+// --- hats: art and head positions from tools/gen_hats.py, which also draws frames-hat/ ---
+const hatOn = () => (pet.hat && HATS[pet.hat] ? pet.hat : undefined)
+
+/** Puts the hat on every frame where Clawd's head was found; its colours join the palette. */
+function wear(frames: Uint8Array[], colors: number[], hat: (typeof HATS)[string], heads: ([number, number] | null)[]) {
+  const keys = Object.keys(hat.colors)
+  const base = colors.length
+  for (const k of keys) colors.push(parseInt(hat.colors[k]!.slice(1), 16))
+  const w = hat.art[0]!.length
+  frames.forEach((f, n) => {
+    const at = heads[n]
+    if (!at) return
+    const left = Math.floor((at[0] - w) / 2)
+    const top = hat.over ? at[1] - hat.art.length + (hat.drop ?? 0) : at[1]
+    hat.art.forEach((row, j) => {
+      for (let i = 0; i < row.length; i++) {
+        const c = row[i]!
+        if (c === '.') continue
+        const x = left + i
+        const y = top + j
+        if (x < 0 || x >= CW || y < 0 || y >= CH) continue
+        // a hat on top stays behind what is already there (a raised arm, a lightbulb); a headband is worn over the head
+        if (f[y * CW + x] === 255 || !hat.over) f[y * CW + x] = base + keys.indexOf(c)
+      }
+    })
+  })
+}
+
+/** A new hat (or none): every drawing made with the old one goes. */
+function changeHat(hat: string | undefined) {
+  pet.hat = hat
+  for (const cache of [decoded, subs, svgCache] as Record<string, unknown>[]) for (const k of Object.keys(cache)) delete cache[k]
+  lastPaint = ''
 }
 
 // --- terminal sub-pixels: a cell is 2x2 of them, each half a column wide and half a row tall ---
@@ -95,7 +135,7 @@ const subs: Record<string, Sub> = {}
  * so the body's left edge and the feet fall on cell boundaries.
  */
 function sub(name: string, size: number): Sub {
-  const key = `${name}@${size}`
+  const key = `${name}|${hatOn() ?? ''}@${size}`
   const hit = subs[key]
   if (hit) return hit
   const a = anim(name)
@@ -310,15 +350,25 @@ const picLeft = (size: number) => -Math.round((BODY_LEFT * size) / 24)
 
 function picture(root: string, sp: string, f: number, size: number, flip: boolean) {
   return {
-    source: { file: `${root}/frames/${sp}/${f}${flip ? 'm' : ''}.png`, format: 'png' as const },
+    source: { file: `${root}/${hatOn() ? `frames-hat/${hatOn()}` : 'frames'}/${sp}/${f}${flip ? 'm' : ''}.png`, format: 'png' as const },
     columns: 2 * size,
     rows: picRows(size),
     left: picLeft(size),
   }
 }
 
-// --- desktop: one SVG per animation (shown once the desktop app draws mods) ---
+// --- desktop: one SVG per animation ---
 const PX = 2
+// the rows each SVG shows, centred on Clawd as it stands (body rows 24-39, a hat up to row 13) and
+// tall enough for its highest reach: a raised arm at row 8, a hat in mid-jump at row 3. Below row 39
+// is empty, there only to keep the frame centred.
+const SVG_ROWS = 48
+const svgTop = () => (hatOn() ? 26 : 31.5) - SVG_ROWS / 2
+// on the desktop: Clawd drawn 1.3x, centred on a lane only as tall as it was (LANE_PX), so the band
+// keeps its height; the frame's empty sky and floor reach into the band's own padding
+const DESKTOP_SCALE = 1.3
+const LANE_PX = 34
+const LANE_SPACER = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${LANE_PX}"/>`
 const svgCache: Record<string, string> = {}
 
 /** One clip as an SVG that plays itself: its frames `start..end`, mirrored when `flip`. */
@@ -353,11 +403,13 @@ function svgOf(name: string, flip: boolean, step: number): string {
     })
     .join('')
   const mirror = flip ? ` transform="translate(${2 * BODY_LEFT + 24} 0) scale(-1 1)"` : ''
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CW * PX}" height="${CH * PX}" viewBox="0 0 ${CW} ${CH}" shape-rendering="crispEdges"><g${mirror}>${groups}</g></svg>`
+  // framed on what shows (the hat's tip to the feet), so a box centred on the text line centres Clawd
+  const top = svgTop()
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CW * PX}" height="${SVG_ROWS * PX}" viewBox="0 ${top} ${CW} ${SVG_ROWS}" shape-rendering="crispEdges"><g${mirror}>${groups}</g></svg>`
 }
 
 function svg(name: string, flip: boolean): string {
-  const key = `${name}:${flip}`
+  const key = `${name}|${hatOn() ?? ''}:${flip}`
   const hit = svgCache[key]
   if (hit) return hit
   let step = 1
@@ -442,7 +494,7 @@ const LEARNED: [number, string, string][] = [
   [10, 'breakCine', 'a full breakdance'],
 ]
 const levelFor = (move: string) => LEARNED.find(([, m]) => m === move)?.[0] ?? 1
-const knows = (move: string) => levelFor(move) <= levelOf(pet.xp)
+const knows = (move: string) => levelFor(move) <= levelNow()
 /** The move if Clawd knows it, else the plainer one it falls back on. */
 const or = (move: string, plain: string) => (knows(move) ? move : plain)
 
@@ -454,6 +506,14 @@ const TITLES: [number, string][] = [
   [7, 'Showstar'],
   [8, 'Magician'],
   [10, 'Legend'],
+  [20, 'Hero'],
+  [30, 'Champion'],
+  [50, 'Mythic'],
+  [100, 'Celestial'],
+  [200, 'Cosmic'],
+  [300, 'Galactic'],
+  [500, 'Eternal'],
+  [1000, 'Infinite'],
 ]
 const titleOf = (level: number) => [...TITLES].reverse().find(([lv]) => lv <= level)![1]
 /** The /pet tricks by the level each is learned at (a trick plays a move, often a learned one). */
@@ -553,6 +613,7 @@ async function syncClock($: Dollar, force = false) {
 // --- what the other mods are up to, kept from their state writes as they happen (no reads
 // while drawing): token-weather's line and fill, Blast Radius holding a command, Replay Theater
 let sideCache: SideLine | null = null
+let hudRows: Segment[][] = [] // hud-pane's two rows (weather, model, usage; project, git), drawn just above the readout
 let context = 0 // percent of the context window, token-weather's latest reading
 let blastHeld = false
 let replayOpen = false
@@ -616,7 +677,26 @@ function retryPictures(now: number): boolean {
 }
 
 const clamp = (n: number) => Math.max(0, Math.min(100, n))
-const levelOf = (xp: number) => Math.floor(Math.sqrt(xp / 20)) + 1
+// Clawd's level is how many tokens Claude Code has used, all told: one level per 100 million (一亿),
+// no cap. The days /stats has counted come from stats-cache.json; the turns since, this mod counts
+// per local day in its store (every session adds to the same days) until stats-cache catches up.
+const TOKENS_PER_LEVEL = 100_000_000
+const STATS_REFRESH_MS = 5 * 60_000
+type DayTokens = Record<string, number>
+let statsBase = 0
+let statsThrough = '' // the last day stats-cache.json has counted, YYYY-MM-DD
+let statsReadAt = 0
+let liveDays: DayTokens = {}
+const tokensTotal = () => statsBase + Object.entries(liveDays).reduce((sum, [day, n]) => (day > statsThrough ? sum + n : sum), 0)
+const levelNow = () => Math.max(1, Math.floor(tokensTotal() / TOKENS_PER_LEVEL))
+const yi = (tokens: number) => `${(tokens / TOKENS_PER_LEVEL).toFixed(1).replace(/\.0$/, '')}亿`
+const pad2 = (n: number) => String(n).padStart(2, '0')
+const dayOf = (ms: number) => {
+  const d = new Date(ms)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+const turnTokens = (u?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | null) =>
+  u ? (u.input_tokens ?? 0) + (u.output_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
 const bar = (n: number) => '▰'.repeat(Math.round(n / 20)) + '▱'.repeat(5 - Math.round(n / 20))
 const sizeOf = () => Math.max(SIZE_MIN, Math.min(SIZE_MAX, Math.round(pet.size ?? SIZE_DEFAULT)))
 const nameOf = () => (pet.name || 'Clawd').replace(/[<>]/g, '').trim() || 'Clawd'
@@ -768,25 +848,26 @@ function nextSteps(mood: Mood, now: number): Step[] {
       return [
         once(fresh([['thinking', 4], ['lightbulb', 2], ['LookingAroundEyesOnly', 2], ['turning', 1], ['meditate', 1], ['sway', 1]])),
         once(fresh(WORK_BEATS)),
+        ...workShow(),
         ...(Math.random() < 0.5 ? stepOff() : []),
       ]
     case 'search': {
       const roam = Math.random() < 0.4 ? wander(near * 2) : null
-      return [...(roam ? [roam] : []), once(fresh([['lookAround', 4], ['LookingAroundEyesOnly', 3], ['point', 2], ['turning', 1]])), once(fresh(WORK_BEATS))]
+      return [...(roam ? [roam] : []), once(fresh([['lookAround', 4], ['LookingAroundEyesOnly', 3], ['point', 2], ['turning', 1]])), once(fresh(WORK_BEATS)), ...workShow()]
     }
     case 'edit':
     case 'shell': {
       // short bouts at the desk, a beat between them; side-on at the desktop, Clawd's head is
       // lost below size 9 on the terminal's blocks
       desk = sizeOf() >= 9 || hd ? pick(['laptop', 'desktop']) : 'laptop'
-      return [hold(desk, 2500 + Math.random() * 2000, now), once(`${desk}Out`), once(fresh(WORK_BEATS)), ...(Math.random() < 0.5 ? stepOff() : [])]
+      return [hold(desk, 2500 + Math.random() * 2000, now), once(`${desk}Out`), once(fresh(WORK_BEATS)), ...workShow(), ...(Math.random() < 0.5 ? stepOff() : [])]
     }
     case 'agent': {
       const w = walk(maxX(), or(Math.random() < 0.7 ? 'run' : 'crabRun', 'walk'), knows('run') ? 0.9 : 0.4)
       return [w ?? once('wave'), once(fresh([['wave', 3], ['point', 3], ['Jumping', 1], ['excitedPick', 1]]))]
     }
     case 'work':
-      return [...stepOff(), once(fresh([['sway', 3], ['thinking', 3], ['lookAround', 2], ['turning', 1]])), once(fresh(WORK_BEATS))]
+      return [...stepOff(), once(fresh([['sway', 3], ['thinking', 3], ['lookAround', 2], ['turning', 1]])), once(fresh(WORK_BEATS)), ...workShow()]
   }
 }
 
@@ -860,10 +941,26 @@ function react($: Dollar, clip: string, times = 1) {
 
 // the big numbers: past Lv.5 each level makes them a quarter more likely, routines and confetti too
 const BIG = new Set(['danceOnce', 'breakOnce', 'hula', 'Jumping', 'danceCine', 'confettiCine', 'sparkCine', 'breakCine'])
-const flair = () => Math.max(0, levelOf(pet.xp) - 5)
-const flourishes = (): [string, number][] => FLOURISH.map(([m, w]): [string, number] => [m, BIG.has(m) ? w * (1 + 0.25 * flair()) : w])
-const routineChance = () => Math.min(0.3, 0.18 + 0.02 * flair())
-const confettiChance = () => Math.min(0.25, 0.1 + 0.02 * flair())
+const flair = () => Math.min(5, Math.max(0, levelNow() - 5)) // held at Lv.10's, so the big moves never crowd out the rest
+// From Lv.10 (Legend) on, Clawd shows off: the full-length numbers three times as likely idle,
+// big moves between bouts at work, and a show to close a turn.
+const CINE = new Set(['danceCine', 'confettiCine', 'sparkCine', 'breakCine'])
+const showy = () => levelNow() >= 10
+const flourishes = (): [string, number][] =>
+  FLOURISH.map(([m, w]): [string, number] => [m, (BIG.has(m) ? w * (1 + 0.25 * flair()) : w) * (showy() && CINE.has(m) ? 3 : 1)])
+const routineChance = () => (showy() ? 0.35 : Math.min(0.3, 0.18 + 0.02 * flair()))
+const confettiChance = () => (showy() ? 0.35 : Math.min(0.25, 0.1 + 0.02 * flair()))
+// at work the long numbers stay out (a full breakdance runs 25 s); these keep the desk lively
+const WORK_SHOW: [string, number][] = [['danceOnce', 3], ['Jumping', 3], ['hula', 2], ['breakOnce', 2], ['excitedPick', 2], ['danceCine', 1], ['confettiCine', 1]]
+const workShow = (): Step[] => (Math.random() < (showy() ? 0.3 : 0.08) ? [once(fresh(WORK_SHOW))] : [])
+// how a turn ends: confetti, else a big number, else a cheer
+const FINALE: [string, number][] = [['danceCine', 2], ['sparkCine', 1], ['breakOnce', 2], ['danceOnce', 2], ['hula', 1]]
+const finale = () =>
+  Math.random() < confettiChance() && knows('confettiCine')
+    ? 'confettiCine'
+    : showy() && Math.random() < 0.4
+      ? fresh(FINALE)
+      : fresh(CHEER.map((c): [string, number] => [c, 1]))
 
 // the clips played lately, so a pick skips them and Clawd keeps changing
 let recent: string[] = []
@@ -895,7 +992,7 @@ const ROUTINES: [number, () => (Step | null)[]][] = [
   [7, () => [once('danceOnce'), once('breakOnce'), once('confettiCine')]],
   [8, () => [once('sparkCine'), once('excitedPick')]],
 ]
-const routines = () => ROUTINES.filter(([lv]) => lv <= levelOf(pet.xp)).map(([, r]) => r)
+const routines = () => ROUTINES.filter(([lv]) => lv <= levelNow()).map(([, r]) => r)
 
 // A one-line readout another mod hands over to draw beside Clawd, on the caption's row, so the
 // two never share a cell: Clawd strolls only to the right of it. Each entry is that mod's
@@ -917,7 +1014,9 @@ async function syncHosts($: Dollar) {
 // the other mods' values Clawd follows, each named where it is read (the engine lists them)
 const TW_READINGS = { plugin: 'token-weather', key: 'readings' } as const
 const BLAST_HELD = { plugin: 'blast-radius', key: 'held' } as const
+const HUD_ROWS = { plugin: 'hud-pane', key: 'rows' } as const
 const REPLAY_STATE = { plugin: 'replay-theater', key: 'state' } as const
+const ACHIEVEMENT = { plugin: 'achievements', key: 'latest' } as const
 type OtherGet = (ref: { plugin: string; key: string }) => Promise<{ value?: unknown }>
 /** A read of another plugin's value: undefined when that plugin is not here. */
 const valueOf = (read: Promise<{ value?: unknown }>) => read.then(r => r.value).catch(() => undefined)
@@ -930,9 +1029,14 @@ type ReplayState = { isOpen?: boolean; index?: number }
 type Held = { decision?: string | null } | null
 
 /** Takes in one state write of the mods Clawd follows; true when something Clawd shows changed. */
+let cheeredAt = 0 // the achievement Clawd last celebrated, by when it was unlocked
 function follow(plugin: string, key: string, value: unknown): boolean {
   if (plugin === 'token-weather' && key === 'line') {
     sideCache = asLine(value)
+    return true
+  }
+  if (plugin === 'hud-pane' && key === 'rows') {
+    hudRows = Array.isArray(value) ? (value as Segment[][]).filter(Array.isArray) : []
     return true
   }
   if (plugin === 'token-weather' && key === 'readings') {
@@ -944,6 +1048,20 @@ function follow(plugin: string, key: string, value: unknown): boolean {
     const was = blastHeld
     blastHeld = !!value && (value as Held)?.decision == null
     return was !== blastHeld
+  }
+  if (plugin === 'achievements' && key === 'latest') {
+    // an achievement unlocked (only a new one: the value seen at start is no news)
+    const got = value as { name?: string; at?: number } | null
+    if (!got?.at || got.at <= cheeredAt) return false
+    const fresh = cheeredAt > 0
+    cheeredAt = got.at
+    if (!fresh) return false
+    shot = { clip: or('danceCine', 'danceOnce'), until: clockNow() + clipMs(or('danceCine', 'danceOnce')) }
+    playing = ''
+    note = `🏆 ${got.name ?? ''}!`
+    noteUntil = clockNow() + 6000
+    noteColor = '#efb154'
+    return true
   }
   if (plugin === 'replay-theater' && key === 'state') {
     const r = (value ?? {}) as ReplayState
@@ -965,7 +1083,10 @@ async function catchUp($: Dollar) {
   follow('token-weather', 'line', await valueOf(($.state.get as unknown as OtherGet)(SIDE)))
   follow('token-weather', 'readings', await valueOf(($.state.get as unknown as OtherGet)(TW_READINGS)))
   follow('blast-radius', 'held', await valueOf(($.state.get as unknown as OtherGet)(BLAST_HELD)))
+  follow('hud-pane', 'rows', await valueOf(($.state.get as unknown as OtherGet)(HUD_ROWS)))
   follow('replay-theater', 'state', await valueOf(($.state.get as unknown as OtherGet)(REPLAY_STATE)))
+  // what was unlocked before Clawd loaded is no news: remember it without dancing
+  if (!cheeredAt) cheeredAt = ((await valueOf(($.state.get as unknown as OtherGet)(ACHIEVEMENT))) as { at?: number } | undefined)?.at || 1
 }
 
 /** Asks the machine its hour now and then: late at night Clawd gets sleepy sooner. */
@@ -997,9 +1118,69 @@ function fitSide(line: SideLine | null, total: number): { segments: Segment[]; w
   return { segments: [], width: 0 }
 }
 
+// One save for every Claude Code that runs Clawd, the terminal's and the desktop app's (which loads
+// the plugin under another name, so its $.store is another): <config dir>/clawd-pet.json.
+type Saved = { pet?: Pet; tokens?: DayTokens }
+let savedAt = ''
+async function claudeDir($: Dollar) {
+  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${(await $.env.get('HOME')) ?? ''}/.claude`
+}
+async function savedFile($: Dollar) {
+  if (!savedAt) savedAt = `${await claudeDir($)}/clawd-pet.json`
+  return savedAt
+}
+/** The shared save; before it exists, what this plugin's own store held, so nothing is lost. */
+async function readSaved($: Dollar): Promise<Saved> {
+  const file = await savedFile($)
+  if (await $.fs.exists(file).catch(() => false)) {
+    try {
+      return JSON.parse(await $.fs.read(file)) as Saved
+    } catch {
+      return {} // caught mid-write by another session: nothing this time
+    }
+  }
+  return {
+    pet: (await $.store.get('pet').catch(() => undefined)) as Pet | undefined,
+    tokens: (await $.store.get('tokens').catch(() => undefined)) as DayTokens | undefined,
+  }
+}
+async function writeSaved($: Dollar, part: Saved) {
+  const next = { ...(await readSaved($)), ...part }
+  await $.fs.write(await savedFile($), `${JSON.stringify(next, null, 2)}\n`).catch(err => $.ui.log(`clawd-pet: save failed: ${err}`))
+}
+
 async function save($: Dollar) {
   pet.savedAt = clockNow()
-  await $.store.set('pet', pet).catch(err => $.ui.log(`clawd-pet: save failed: ${err}`))
+  await writeSaved($, { pet })
+}
+
+/** Rereads the lifetime token count: stats-cache.json's days, then this mod's own days since. */
+async function readTokens($: Dollar) {
+  statsReadAt = clockNow()
+  const dir = await claudeDir($)
+  try {
+    const stats = JSON.parse(await $.fs.read(`${dir}/stats-cache.json`)) as {
+      lastComputedDate?: string
+      dailyModelTokens?: { date: string; tokensByModel?: Record<string, number> }[]
+    }
+    statsBase = (stats.dailyModelTokens ?? []).reduce((sum, d) => sum + Object.values(d.tokensByModel ?? {}).reduce((a, b) => a + b, 0), 0)
+    statsThrough = stats.lastComputedDate ?? ''
+  } catch {
+    // no stats yet: the turns this mod counted are all there is
+  }
+  liveDays = (await readSaved($)).tokens ?? {}
+}
+
+/** Adds a finished turn's tokens to today, and drops the days stats-cache.json now counts itself. */
+async function countTokens($: Dollar, tokens: number) {
+  const days = { ...((await readSaved($)).tokens ?? {}) }
+  if (tokens > 0) {
+    const day = dayOf(clockNow())
+    days[day] = (days[day] ?? 0) + tokens
+  }
+  for (const day of Object.keys(days)) if (day <= statsThrough) delete days[day]
+  liveDays = days
+  await writeSaved($, { tokens: days })
 }
 
 // what Clawd plays between turns; the band is never shorter than the tallest of them
@@ -1159,7 +1340,7 @@ const captionNow = () => {
   return long ? `${base} · ${long}` : base
 }
 /** "Lv.5 Dancer": the level and its title, always beside Clawd's name. */
-const badge = () => `Lv.${levelOf(pet.xp)} ${titleOf(levelOf(pet.xp))}`
+const badge = () => `Lv.${levelNow()} ${titleOf(levelNow())}`
 const captionText = () => `${nameOf()} ${badge()} · ${captionNow()}`
 
 const short = (text: string, n = 28) => (text.length > n ? `${text.slice(0, n - 1)}…` : text)
@@ -1209,11 +1390,12 @@ function say($: Dollar, text: string, color = '#d97757', ms = 3000) {
 }
 
 const HELP = [
-  '/pet                          show or hide',
+  '/pet                          show or hide (hidden only until the session ends)',
   '/pet feed | pat               feed | pat',
   '/pet size 6                   any size 4-40 (body width in columns); /pet bigger | smaller',
   '/pet come | run | stay | roam come here | run a lap | stay put | wander again',
   `/pet ${Object.keys(TRICKS).join(' | ')}   (some learned at higher levels)`,
+  `/pet hat ${Object.keys(HATS).join(' | ')} | off`,
   '/pet name Yanbaby             rename',
   '/pet sound on | off           little chiptune sounds for its reactions (off by default)',
   '/pet stats                    level, title, hunger, mood, moves learned',
@@ -1312,6 +1494,24 @@ async function command($: Dollar, raw: string): Promise<string> {
     say($, `call me ${pet.name}!`)
     return `Renamed to ${pet.name}.`
   }
+  if (verb === 'hat' || verb === 'hats') {
+    const which = arg.toLowerCase().replace(/[^a-z]/g, '')
+    const all = Object.keys(HATS)
+    if (!which) return `${nameOf()} wears ${hatOn() ? `a ${HATS[hatOn()!]!.name}` : 'no hat'}. /pet hat ${all.join(' | ')} | off`
+    if (/^(off|none|no|remove)$/.test(which)) {
+      changeHat(undefined)
+      await save($)
+      kick($)
+      return `${nameOf()} took its hat off.`
+    }
+    const hat = all.find(h => h === which || h.startsWith(which)) ?? (which === 'top' ? 'tophat' : undefined)
+    if (!hat) return `No hat called ${arg}. Try ${all.join(', ')}.`
+    changeHat(hat)
+    await save($)
+    react($, 'turning')
+    say($, `my ${HATS[hat]!.name}!`)
+    return `${nameOf()} put on the ${HATS[hat]!.name}.`
+  }
   if (verb === 'hd' || verb === 'pixel') {
     // no more blocks by choice: this only tries pictures again after a terminal could not show one
     hd = true
@@ -1327,13 +1527,13 @@ async function command($: Dollar, raw: string): Promise<string> {
     return pet.sound ? `${nameOf()} makes little sounds now. /pet sound off to mute.` : `${nameOf()} is quiet.`
   }
   if (verb === 'stats') {
-    const level = levelOf(pet.xp)
+    const level = levelNow()
     const next = LEARNED.filter(([lv]) => lv > level)
     const at = next[0]?.[0]
     const known = FLOURISH.filter(([m]) => knows(m)).length + routines().length
     const total = FLOURISH.length + ROUTINES.length
     return [
-      `${nameOf()}  Lv.${level} ${titleOf(level)} (xp ${pet.xp}${at ? ` · Lv.${at} at ${20 * (at - 1) ** 2}` : ''})`,
+      `${nameOf()}  Lv.${level} ${titleOf(level)} (${yi(tokensTotal())} tokens · Lv.${level + 1} at ${yi((level + 1) * TOKENS_PER_LEVEL)})`,
       `food ${bar(pet.food)} ${Math.round(pet.food)}%`,
       `mood ${bar(pet.love)} ${Math.round(pet.love)}%`,
       `size ${sizeOf()} · ${hdOn() ? 'pixel-perfect' : 'blocks'} · sound ${pet.sound ? 'on' : 'off'}`,
@@ -1341,9 +1541,9 @@ async function command($: Dollar, raw: string): Promise<string> {
     ].join('\n')
   }
   const trick = TRICKS[verb]
-  if (trick && (TRICK_LEVEL[verb] ?? 1) > levelOf(pet.xp)) {
+  if (trick && (TRICK_LEVEL[verb] ?? 1) > levelNow()) {
     react($, 'turning')
-    return `${nameOf()} learns ${verb} at Lv.${TRICK_LEVEL[verb]} (now Lv.${levelOf(pet.xp)}). Keep working together!`
+    return `${nameOf()} learns ${verb} at Lv.${TRICK_LEVEL[verb]} (now Lv.${levelNow()}). Keep working together!`
   }
   if (trick) {
     react($, trick[0], trick[1])
@@ -1358,13 +1558,15 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await syncClock($, true)
     lastActive = lastDecay = lastSave = clockNow()
-    const saved = (await $.store.get('pet').catch(() => undefined)) as Pet | undefined
+    const saved = (await readSaved($)).pet
     if (saved && typeof saved.food === 'number') {
       const minutes = Math.max(0, (clockNow() - (saved.savedAt || clockNow())) / 60_000)
       pet = { ...saved, food: clamp(saved.food - minutes / 6), love: clamp(saved.love - minutes / 12) }
       lastDecay = clockNow()
       if (typeof pet.size !== 'number') pet.size = SIZE_DEFAULT
     }
+    // every session opens with Clawd out: /pet hides it for this session only
+    pet.hidden = false
     // once: the xp Clawd earned as the inline dev mod, whose store this install cannot read
     if (!pet.merged) {
       pet.xp += INLINE_XP
@@ -1375,6 +1577,7 @@ export const register: Register = on => {
     delete pet.hd // the old blocks-or-pictures choice: pictures always now
     // pictures need the frames made ahead; without them, blocks
     if (!(await $.fs.exists(`${$.plugin.root}/frames/Swaying/0.png`).catch(() => false))) hd = false
+    await readTokens($)
     await syncHosts($)
     await catchUp($)
     void checkNight($, clockNow())
@@ -1421,7 +1624,6 @@ export const register: Register = on => {
     }
     if (ran.isError) react($, pick(OUCH.filter(knows)))
     else if (!ran.deny) {
-      pet.xp += workMood === 'edit' ? 3 : 1
       // a passing test run is a treat
       const cmd = typeof input.command === 'string' ? input.command : ''
       if (e.tool === 'Bash' && /\b(test|tests|jest|vitest|pytest|mocha|rspec|cargo test|go test)\b/.test(cmd)) {
@@ -1437,13 +1639,14 @@ export const register: Register = on => {
     await syncClock($)
     turnStartedAt = 0
     asking = 0
-    const before = levelOf(pet.xp)
+    const before = levelNow()
     working = false
     lastActive = clockNow()
     doing = ''
-    pet.xp += 5
+    if (clockNow() - statsReadAt >= STATS_REFRESH_MS) await readTokens($)
+    await countTokens($, turnTokens(e.usage))
     pet.food = clamp(pet.food + 2) // a snack for every finished turn
-    const level = levelOf(pet.xp)
+    const level = levelNow()
     if (level > before) {
       // a level up: the newest move it learned, and a toast with all it learned
       const learned = LEARNED.filter(([lv]) => lv > before && lv <= level)
@@ -1452,7 +1655,7 @@ export const register: Register = on => {
       const title = titleOf(level) !== titleOf(before) ? ` · ${titleOf(level)}` : ''
       const what = learned.length ? ` Learned ${learned.map(([, , name]) => name).join(', ')}.` : ''
       $.ui.toast(`${nameOf()} reached Lv.${level}${title}!${what}`)
-    } else react($, Math.random() < confettiChance() && knows('confettiCine') ? 'confettiCine' : fresh(CHEER.map((c): [string, number] => [c, 1])))
+    } else react($, finale())
     kick($)
     await save($)
     return next(e)
@@ -1541,29 +1744,46 @@ export const register: Register = on => {
           })()
         : null
     if (e.surface === 'desktop') {
-      // the desktop plays each clip as an SVG; a new clip, a step along or a new line is a redraw.
-      // Clawd's range: what the band's width leaves after the readout, its picture and its caption
-      const readoutWidth = side.segments.reduce((w, seg) => w + widthOf(seg.children), 0)
-      const picture = Math.ceil((CW * PX) / DESKTOP_CELL_PX)
+      // the desktop: one compact line, the readout and Clawd's caption fixed on the left, then a lane
+      // where Clawd strolls. Clawd floats in the lane (absolute), drawn larger than the lane is tall
+      // and centred on it, so neither its size nor its walk moves the text or grows the band.
+      // A new clip, a step along or a new caption is a redraw.
+      const { Box, Text, Svg } = $.ui.resolve(e)
+      const petPx = Math.round(CW * DESKTOP_SCALE)
+      const petCells = Math.ceil(petPx / DESKTOP_CELL_PX)
+      const widthOfRuns = (segments: Segment[]) => segments.reduce((w, seg) => w + widthOf(seg.children), 0)
+      // the text never gives way: the full readout while Clawd keeps a lane of at least 12 cells
+      const textCells = (segments: Segment[]) => (segments.length ? widthOfRuns(segments) + 3 : 0) + widthOf(captionText()) + 2
+      const readout = sideCache ? (textCells(sideCache.full) + petCells + 12 <= total ? sideCache.full : sideCache.compact) : []
+      // the lane is what the text leaves, up to DESKTOP_RANGE cells of stroll
       minX = 0
-      rangeRight = Math.max(0, Math.max(20, e.props.bodyColumns) - readoutWidth - picture - widthOf(captionText()) - 4)
+      rangeRight = Math.max(0, Math.min(DESKTOP_RANGE, total - textCells(readout) - petCells - 2))
       keepInRange()
       desktop = { at: Math.round(x), caption: captionText() }
-      const { Box, Text, Svg } = $.ui.resolve(e)
       return (
         <Box flexDirection="column">
-          {alone}
-          <Box flexDirection="row" columnGap={1} alignItems="flex-end">
-            {side.width > 0 && <Text>{runs}</Text>}
-            <Box width={Math.round(x)} />
-            <Svg key={`pet-${playing}-${playingAt}`} source={svg(playing, facing < 0)} alt={`${nameOf()}: ${caption}`} width={CW * PX} height={CH * PX} isInteractive />
-            <Text>
-              <Text bold color="#d97757">{nameOf()}</Text>
-              <Text dimColor> Lv.{levelOf(pet.xp)} </Text>
-              <Text color="#efb154">{titleOf(levelOf(pet.xp))}</Text>
-              <Text dimColor> · </Text>
-              <Text color={color}>{caption}</Text>
-            </Text>
+          <Box flexDirection="row" columnGap={1} alignItems="center">
+            {readout.length > 0 && (
+              <Box flexShrink={0}>
+                <Text wrap="truncate">{runsOf(readout)}</Text>
+              </Box>
+            )}
+            {readout.length > 0 && <Text dimColor>│</Text>}
+            <Box flexShrink={0}>
+              <Text wrap="truncate">
+                <Text bold color="#d97757">{nameOf()}</Text>
+                <Text dimColor> Lv.{levelNow()} </Text>
+                <Text color="#efb154">{titleOf(levelNow())}</Text>
+                <Text dimColor> · </Text>
+                <Text color={color}>{caption}</Text>
+              </Text>
+            </Box>
+            <Box position="relative" flexGrow={1} flexShrink={1} minWidth={0}>
+              <Svg source={LANE_SPACER} alt="" width={1} height={LANE_PX} />
+              <Box position="absolute" top={0} bottom={0} left={Math.round(x)} alignItems="center" justifyContent="center" overflow="visible">
+                <Svg key={`pet-${playing}-${playingAt}`} source={svg(playing, facing < 0)} alt={`${nameOf()}: ${caption}`} width={petPx} height={Math.round(SVG_ROWS * DESKTOP_SCALE)} />
+              </Box>
+            </Box>
           </Box>
           {below}
         </Box>
@@ -1587,13 +1807,14 @@ export const register: Register = on => {
       : 0
     minX = side.width ? Math.min(1 + lineWidth + 2, Math.max(0, cols - sizeOf() - 1)) : 0
     rangeRight = cols - sizeOf() - 1
-    const rows = Math.min(bandRows(now), maxRows)
+    const fullRows = bandRows(now)
+    const rows = Math.min(fullRows, maxRows)
     const { Box, Text, Raster, Image, Client } = $.ui.resolve(e)
     // Clawd's caption as runs of Text, to sit inside another Text (a fragment there is refused)
     const own = [
       <Text bold color="#d97757">{nameOf()}</Text>,
-      <Text dimColor> Lv.{levelOf(pet.xp)} </Text>,
-      <Text color="#efb154">{titleOf(levelOf(pet.xp))}</Text>,
+      <Text dimColor> Lv.{levelNow()} </Text>,
+      <Text color="#efb154">{titleOf(levelNow())}</Text>,
       <Text dimColor> · </Text>,
       <Text color={color}>{caption}</Text>,
     ]
@@ -1636,6 +1857,15 @@ export const register: Register = on => {
           ) : (
             <Box position="absolute" bottom={0} left={1} width={side.width - SIDE_GAP}>
               {readout}
+            </Box>
+          )}
+          {hudRows.length > 0 && fullRows <= maxRows && rows > hudRows.length && (
+            // only while Clawd's whole box fits: squeezed (a notice or menu above), the rows would spill over it;
+            // hud-pane's rows, laid over the band's blank rows just above the readout (the band keeps its size)
+            <Box position="absolute" bottom={1} left={1} width={Math.max(10, cols - 2)} flexDirection="column">
+              {hudRows.map(row => (
+                <Text wrap="truncate">{runsOf(row)}</Text>
+              ))}
             </Box>
           )}
         </Box>
