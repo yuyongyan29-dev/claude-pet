@@ -179,3 +179,22 @@ test('on the desktop Clawd stands on its lane and rises above it, never spilling
   expect(svg).toMatch(/viewBox="0 -8 48 48"/) // the frame ends at the feet (row 39)
   await ui.unmount()
 })
+
+// image-view as far as Clawd cares: the pasted images it publishes while the draft holds their tags
+const imageView: Register = on => {
+  on('turn.complete', async ($, e, next) => {
+    const r = await next(e)
+    await ($.state.set as any)({ plugin: 'image-view', key: 'images' }, [{ n: 1, path: '/tmp/1.png', size: { width: 10, height: 10 } }])
+    return r
+  })
+}
+
+test('while image-view shows thumbnails Clawd steps out of the band; its caption stays', { plugins: [{ name: 'image-view', register: imageView }] }, async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  await $.turn.complete({ answer: 'done' } as never)
+  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 160 } })
+  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Lv\.\d+/ })).toBeDefined()
+  await ui.unmount()
+})

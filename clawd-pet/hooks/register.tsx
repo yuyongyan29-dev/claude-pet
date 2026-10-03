@@ -618,6 +618,8 @@ async function syncClock($: Dollar, force = false) {
 // --- what the other mods are up to, kept from their state writes as they happen (no reads
 // while drawing): token-weather's line and fill, Blast Radius holding a command, Replay Theater
 let sideCache: SideLine | null = null
+// image-view's thumbnails are up: Clawd steps out of the band (its text stays) so they have the room
+let pasting = false
 let hudRows: Segment[][] = [] // hud-pane's two rows (weather, model, usage; project, git), drawn just above the readout
 let context = 0 // percent of the context window, token-weather's latest reading
 let blastHeld = false
@@ -1040,6 +1042,11 @@ function follow(plugin: string, key: string, value: unknown): boolean {
   if (plugin === 'token-weather' && key === 'line') {
     sideCache = asLine(value)
     return true
+  }
+  if (plugin === 'image-view' && key === 'images') {
+    const was = pasting
+    pasting = Array.isArray(value) && value.length > 0
+    return was !== pasting
   }
   if (plugin === 'hud-pane' && key === 'rows') {
     hudRows = Array.isArray(value) ? (value as Segment[][]).filter(Array.isArray) : []
@@ -1850,7 +1857,7 @@ export const register: Register = on => {
     minX = Math.min(1 + blockWidth + 2, Math.max(0, cols - sizeOf() - 1))
     rangeRight = Math.min(cols - sizeOf() - 1, minX + DESKTOP_RANGE)
     const fullRows = bandRows(now)
-    const rows = Math.min(fullRows, maxRows)
+    const rows = pasting ? 0 : Math.min(fullRows, maxRows)
     const { Box, Text, Raster, Image, Client } = $.ui.resolve(e)
     // Clawd's caption as runs of Text, to sit inside another Text (a fragment there is refused)
     const own = [
@@ -1875,13 +1882,15 @@ export const register: Register = on => {
       </Box>
     )
     keepInRange()
-    if (rows < 1)
+    if (rows < 1) {
+      band = null
       return (
         <Box flexDirection="column">
           <Box paddingLeft={1}>{block}</Box>
           {below}
         </Box>
       )
+    }
     band = { requestId: e.requestId, cols, rows, maxRows, x: Math.round(x), hop: hopRows(liftAt(Math.round(x))) }
     const f = frameNow(now)
     const flip = facing < 0
