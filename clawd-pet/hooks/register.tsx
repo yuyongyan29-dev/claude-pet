@@ -345,7 +345,8 @@ function scene(s: Sub, f: number, cols: number, rows: number, x: number, flip: b
  * so the box must stay inside the band and off the caption: `2 * size` columns by picRows.
  */
 const PIC_PX = 32
-const picRows = (size: number) => Math.max(1, Math.round((PIC_PX * size) / 48))
+// rounded up: a box shorter than the picture's shape scales it to fill and clips its bottom (the feet at small sizes)
+const picRows = (size: number) => Math.max(1, Math.ceil((PIC_PX * size) / 48))
 const picLeft = (size: number) => -Math.round((BODY_LEFT * size) / 24)
 
 function picture(root: string, sp: string, f: number, size: number, flip: boolean) {
