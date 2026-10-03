@@ -5,5 +5,14 @@
   "author": {
     "name": "yanyan"
   },
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "homepage": "https://github.com/yuyongyan29-dev/claude-pet",
+  "repository": "https://github.com/yuyongyan29-dev/claude-pet",
+  "license": "MIT",
+  "keywords": [
+    "pet",
+    "clawd",
+    "mod",
+    "fun"
+  ]
 }
