@@ -105,6 +105,10 @@ clawd-pet/
   tools/gen_hats.py               regenerates hats.ts and frames-hat/
 ```
 
+## License
+
+The code is released under the [MIT License](LICENSE). The Clawd character and its artwork (`clawd-pet/frames/`, `clawd-pet/frames-hat/`, the sprite data in `clawd-pet/hooks/sprites.ts`, and the GIFs in `docs/`) belong to Anthropic and are **not** covered by the MIT License.
+
 ## Credits
 
 Clawd and its animations come from Anthropic's clawd-quest sprites in the Claude desktop app. This is an unofficial fan project, not affiliated with or endorsed by Anthropic.

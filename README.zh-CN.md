@@ -93,6 +93,10 @@
 - **显示成方块而不是像素图？** 当前终端不支持图片协议。换用 Ghostty / kitty / iTerm2，或执行 `/pet hd` 切换。
 - **太大或太小？** `/pet size 4` 到 `/pet size 40` 自由调整。
 
+## 许可证
+
+代码部分采用 [MIT 许可证](LICENSE)。Clawd 角色及其美术素材（`clawd-pet/frames/`、`clawd-pet/frames-hat/`、`clawd-pet/hooks/sprites.ts` 中的精灵数据，以及 `docs/` 中的 GIF）归 Anthropic 所有，**不在** MIT 许可范围内。
+
 ## 致谢
 
 Clawd 及其动画来自 Claude 桌面应用中 Anthropic 的 clawd-quest 素材。本项目为非官方粉丝作品，与 Anthropic 无关，也未获其认可。

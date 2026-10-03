@@ -13,5 +13,6 @@
     "clawd",
     "mod",
     "fun"
-  ]
+  ],
+  "license": "MIT"
 }
