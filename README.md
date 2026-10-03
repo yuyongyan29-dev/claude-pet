@@ -1,6 +1,19 @@
 # Claude Pet — Clawd 住在你的 Claude Code 里
 
+<p align="center"><img src="docs/hero.gif" alt="Clawd walking" width="640"></p>
+
 **Clawd** 是一只像素宠物，它在 Claude Code 输入框上方来回散步，并对 Claude 正在做的事做出反应：思考时托腮，搜索时东张西望，跑命令时敲笔记本，等你回答时挥手，深夜会打瞌睡。
+
+## 动作一览 · Moves
+
+| | | | |
+|:-:|:-:|:-:|:-:|
+| <img src="docs/think.gif" width="144" alt="思考 · thinking"> | <img src="docs/laptop.gif" width="144" alt="跑命令 · running a command"> | <img src="docs/wave.gif" width="144" alt="等你回答 · waiting for you"> | <img src="docs/lightbulb.gif" width="144" alt="/pet idea"> |
+| 思考 · thinking | 跑命令 · running a command | 等你回答 · waiting for you | /pet idea |
+| <img src="docs/dance.gif" width="144" alt="/pet dance"> | <img src="docs/breakdance.gif" width="144" alt="/pet breakdance"> | <img src="docs/hula.gif" width="144" alt="/pet hula"> | <img src="docs/jump.gif" width="144" alt="/pet jump"> |
+| /pet dance | /pet breakdance | /pet hula | /pet jump |
+| <img src="docs/confetti.gif" width="144" alt="/pet party"> | <img src="docs/meditate.gif" width="144" alt="/pet meditate"> | <img src="docs/dizzy.gif" width="144" alt="/pet spin · 连点太多 clicked too much"> | <img src="docs/hats.gif" width="144" alt="/pet hat …"> |
+| /pet party | /pet meditate | /pet spin · 连点太多 clicked too much | /pet hat … |
 
 [English](#english) · [中文](#中文)
 
