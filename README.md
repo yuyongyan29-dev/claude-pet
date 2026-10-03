@@ -6,16 +6,6 @@
 
 **Clawd** is a pixel pet that strolls along the band above your Claude Code prompt and reacts to what Claude is doing: chin in hand while thinking, looking around while searching, typing on a laptop while running commands, waving when it's waiting for you, and dozing off late at night.
 
-## In action
-
-**Terminal (Ghostty)**
-
-<img src="docs/terminal.gif" alt="Clawd in the terminal" width="320">
-
-**Desktop app (Code tab)**
-
-<img src="docs/desktop.gif" alt="Clawd in the Claude desktop app" width="300">
-
 ## Moves
 
 | | | | |
