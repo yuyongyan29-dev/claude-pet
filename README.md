@@ -4,6 +4,16 @@
 
 **Clawd** 是一只像素宠物，它在 Claude Code 输入框上方来回散步，并对 Claude 正在做的事做出反应：思考时托腮，搜索时东张西望，跑命令时敲笔记本，等你回答时挥手，深夜会打瞌睡。
 
+## 实际效果 · In action
+
+**终端 Terminal（Ghostty）**
+
+<img src="docs/terminal.gif" alt="Clawd in the terminal" width="320">
+
+**桌面端 Desktop（Claude 桌面应用 Code 标签页）**
+
+<img src="docs/desktop.gif" alt="Clawd in the Claude desktop app" width="300">
+
 ## 动作一览 · Moves
 
 | | | | |
