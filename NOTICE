@@ -6,5 +6,6 @@ desktop app) and are not licensed by this repository. This covers:
   clawd-pet/frames-hat/
   clawd-pet/hooks/sprites.ts   (sprite pixel data and animation clips)
   docs/*.gif
+  docs/social-preview.png
 
 The MIT License applies to everything else, including the mod's code.
