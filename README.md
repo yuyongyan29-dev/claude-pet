@@ -97,7 +97,7 @@ clawd-pet/
 
 ## License
 
-The code is released under the [MIT License](LICENSE). The Clawd character and its artwork (`clawd-pet/frames/`, `clawd-pet/frames-hat/`, the sprite data in `clawd-pet/hooks/sprites.ts`, and the GIFs in `docs/`) belong to Anthropic and are **not** covered by the MIT License.
+The code is released under the [MIT License](LICENSE). The Clawd character and its artwork (`clawd-pet/frames/`, `clawd-pet/frames-hat/`, the sprite data in `clawd-pet/hooks/sprites.ts`, and the GIFs in `docs/`; see [NOTICE](NOTICE)) belong to Anthropic and are **not** covered by the MIT License.
 
 ## Credits
 

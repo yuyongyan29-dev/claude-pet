@@ -85,7 +85,7 @@
 
 ## 许可证
 
-代码部分采用 [MIT 许可证](LICENSE)。Clawd 角色及其美术素材（`clawd-pet/frames/`、`clawd-pet/frames-hat/`、`clawd-pet/hooks/sprites.ts` 中的精灵数据，以及 `docs/` 中的 GIF）归 Anthropic 所有，**不在** MIT 许可范围内。
+代码部分采用 [MIT 许可证](LICENSE)。Clawd 角色及其美术素材（`clawd-pet/frames/`、`clawd-pet/frames-hat/`、`clawd-pet/hooks/sprites.ts` 中的精灵数据，以及 `docs/` 中的 GIF，见 [NOTICE](NOTICE)）归 Anthropic 所有，**不在** MIT 许可范围内。
 
 ## 致谢
 

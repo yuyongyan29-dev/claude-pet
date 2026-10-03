@@ -1,0 +1,10 @@
+Excluded from this license: the Clawd character and its artwork. Clawd and
+its animations are Anthropic's (from the clawd-quest sprites in the Claude
+desktop app) and are not licensed by this repository. This covers:
+
+  clawd-pet/frames/
+  clawd-pet/frames-hat/
+  clawd-pet/hooks/sprites.ts   (sprite pixel data and animation clips)
+  docs/*.gif
+
+The MIT license above applies to everything else, including the mod's code.
