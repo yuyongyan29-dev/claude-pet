@@ -359,16 +359,18 @@ function picture(root: string, sp: string, f: number, size: number, flip: boolea
 
 // --- desktop: one SVG per animation ---
 const PX = 2
-// the rows each SVG shows, centred on Clawd as it stands (body rows 24-39, a hat up to row 13) and
-// tall enough for its highest reach: a raised arm at row 8, a hat in mid-jump at row 3. Below row 39
-// is empty, there only to keep the frame centred.
+// the rows each SVG shows: everything above Clawd's feet (row 39 is the frame's last), tall enough
+// for its highest reach (a raised arm at row 8, a hat in mid-jump at row 3). With the feet on the
+// frame's bottom edge, the frame centred on the lane puts them on the card's bottom border.
 const SVG_ROWS = 48
-const svgTop = () => (hatOn() ? 26 : 31.5) - SVG_ROWS / 2
+// FEET_LIFT empty rows under the feet (none: the feet stand on the lane's bottom, inside the card)
+const FEET_LIFT = 0
+const svgTop = () => CH + FEET_LIFT - SVG_ROWS
 // on the desktop: Clawd drawn 1.3x, centred on a lane only as tall as it was (LANE_PX), so the band
 // keeps its height; the frame's empty sky and floor reach into the band's own padding
-const DESKTOP_SCALE = 1.3
+const DESKTOP_SCALE = 1.1
 // beside hud-pane's two rows the card is three rows tall; Clawd is drawn a little larger than beside one row
-const DESKTOP_HUD_SCALE = 1.8
+const DESKTOP_HUD_SCALE = 1.3
 const LANE_PX = 34
 const LANE_SPACER = `<svg xmlns="http://www.w3.org/2000/svg" width="1" height="${LANE_PX}"/>`
 const svgCache: Record<string, string> = {}
@@ -1278,12 +1280,19 @@ function refused($: Dollar, why: string) {
     $.clock.after(/blit again/i.test(why) ? 500 : 3_000, () => $.ui.invalidate('ui.render'))
     return
   }
+  hd = false // Clawd left out for now (never blocks)
+  if (/bg worker/i.test(why)) {
+    // the session is in the background (the agents view): pictures come back the moment it returns,
+    // so look again every couple of seconds, without counting this against the terminal
+    hdRetryAt = clockNow() + 2_000
+    $.ui.invalidate('ui.render')
+    return
+  }
   hdRefusals += 1
-  hd = false // blocks for now
   // never for good: a terminal that refused at start (a new or resumed session) often takes pictures
   // a little later, so try again after a minute, then every few minutes, with no /pet hd needed
   hdRetryAt = clockNow() + (hdRefusals < HD_TRIES ? 60_000 : HD_RETRY_LATER_MS)
-  $.ui.log(`clawd-pet: pictures refused (${why}); blocks, trying pictures again soon`)
+  $.ui.log(`clawd-pet: pictures refused (${why}); Clawd hidden, trying pictures again soon`)
   $.ui.invalidate('ui.render')
 }
 
@@ -1325,8 +1334,7 @@ function tick($: Dollar) {
     )
     return
   }
-  const s = sub(spriteOf(playing), sizeOf())
-  void $.ui.blit({ requestId: band.requestId, key: RASTER_KEY, cells: scene(s, f, band.cols, band.rows, Math.round(x), flip, lift) }).catch(() => {})
+  // no blocks, ever: without pictures Clawd is simply not drawn (the caption stays)
 }
 
 /** "2m" or "1h 5m": how long the turn has run, once it has run long. */
@@ -1541,7 +1549,7 @@ async function command($: Dollar, raw: string): Promise<string> {
       `${nameOf()}  Lv.${level} ${titleOf(level)} (${yi(tokensTotal())} tokens · Lv.${level + 1} at ${yi((level + 1) * TOKENS_PER_LEVEL)})`,
       `food ${bar(pet.food)} ${Math.round(pet.food)}%`,
       `mood ${bar(pet.love)} ${Math.round(pet.love)}%`,
-      `size ${sizeOf()} · ${hdOn() ? 'pixel-perfect' : 'blocks'} · sound ${pet.sound ? 'on' : 'off'}`,
+      `size ${sizeOf()} · ${hdOn() ? 'pixel-perfect' : 'hidden (this terminal shows no pictures)'} · sound ${pet.sound ? 'on' : 'off'}`,
       `moves: ${known}/${total} learned${at ? ` · Lv.${at} brings ${next.filter(([lv]) => lv === at).map(([, , name]) => name).join(', ')}` : ' · all of them!'}`,
     ].join('\n')
   }
@@ -1774,7 +1782,8 @@ export const register: Register = on => {
       const lane = (
         <Box position="relative" flexGrow={1} flexShrink={1} minWidth={0}>
           <Svg source={LANE_SPACER} alt="" width={1} height={LANE_PX} />
-          <Box position="absolute" top={0} bottom={0} left={Math.round(x)} alignItems="center" justifyContent="center" overflow="visible">
+          {/* the frame stands on the lane's bottom and rises above it: spilling below would give the card something to scroll */}
+          <Box position="absolute" top={0} bottom={0} left={Math.round(x)} alignItems="flex-end" justifyContent="center" overflow="visible">
             <Svg key={`pet-${playing}-${playingAt}`} source={svg(playing, facing < 0)} alt={`${nameOf()}: ${caption}`} width={petPx} height={Math.round(SVG_ROWS * scale)} />
           </Box>
         </Box>
@@ -1805,11 +1814,13 @@ export const register: Register = on => {
             // hud-pane's rows above Clawd's line: the desktop card has no blank rows and clips what
             // spills, so here (the one exception) the band grows by these rows; Clawd strolls beside
             // the whole block, drawn as tall as it
-            <Box flexDirection="row" columnGap={1}>
+            // stretch: the lane is as tall as the text block, so Clawd stands on the card's last line
+            <Box flexDirection="row" columnGap={1} alignItems="stretch">
               <Box flexDirection="column" flexShrink={0}>
-                {hudRows.map(row => (
-                  <Text wrap="truncate">{runsOf(row)}</Text>
-                ))}
+                {/* hud-pane's rows joined into one line of session info above the status line: two rows, not three */}
+                <Text wrap="truncate">
+                  {hudRows.flatMap((row, i) => (i > 0 ? [<Text dimColor> · </Text>, ...runsOf(row)] : runsOf(row)))}
+                </Text>
                 {line}
               </Box>
               {lane}
@@ -1822,27 +1833,21 @@ export const register: Register = on => {
       )
     }
 
-    // the terminal: one Raster as wide as the band, Clawd strolling across it with its feet on the
-    // bottom row, the caption laid over the middle of that row. With a readout (token-weather) the
-    // readout and the caption share one line on the left, and Clawd strolls from its end to the band's.
+    // the terminal, laid out like the desktop: a text block at the band's bottom left (hud-pane's rows
+    // joined into one line, then the readout and Clawd's caption), and Clawd strolling in a lane just
+    // right of it, its feet on the block's last line. The band keeps its size; other bands sit below.
     const cols = Math.max(20, Math.min(512, e.props.bodyColumns))
-    const s = sub(spriteOf(playing), sizeOf())
     const maxRows = e.props.maxRows - 1
     const text = captionText()
-    const width = Math.min(widthOf(text), cols)
-    // beside a readout the caption rides on its line, so Clawd's range holds no text to hop over
-    cap = side.width ? { left: 0, width: 0, text } : { left: Math.floor((cols - width) / 2), width, text }
-    // the line ends where Clawd's range begins, so the range follows the terminal's width and the
-    // line's length; a longer line nudges Clawd right
-    const lineWidth = side.width
-      ? Math.min(side.width - SIDE_GAP, side.segments.reduce((w, seg) => w + widthOf(seg.children), 0) + widthOf(SIDE_SEP) + widthOf(text))
-      : 0
-    minX = side.width ? Math.min(1 + lineWidth + 2, Math.max(0, cols - sizeOf() - 1)) : 0
-    // hud-pane's rows sit at the left above the readout: Clawd strolls only to the right of them, so
-    // neither covers the other
-    const hudWidth = hudRows.reduce((w, row) => Math.max(w, row.reduce((n, seg) => n + widthOf(seg.children), 0)), 0)
-    if (hudWidth) minX = Math.max(minX, Math.min(1 + hudWidth + 2, Math.max(0, cols - sizeOf() - 1)))
-    rangeRight = cols - sizeOf() - 1
+    const segWidth = (segments: Segment[]) => segments.reduce((w, seg) => w + widthOf(seg.children), 0)
+    const readoutSegs = sideCache ? (fitSide(sideCache, cols).width ? side.segments : sideCache.compact) : []
+    const captionWidth = (readoutSegs.length ? segWidth(readoutSegs) + widthOf(SIDE_SEP) : 0) + widthOf(text)
+    const hudWidth = hudRows.reduce((w, row, i) => w + (i > 0 ? 3 : 0) + segWidth(row), 0)
+    const blockWidth = Math.min(Math.max(captionWidth, hudWidth), Math.max(10, cols - sizeOf() - 4))
+    // no caption in Clawd's lane, so nothing to hop over
+    cap = { left: 0, width: 0, text }
+    minX = Math.min(1 + blockWidth + 2, Math.max(0, cols - sizeOf() - 1))
+    rangeRight = Math.min(cols - sizeOf() - 1, minX + DESKTOP_RANGE)
     const fullRows = bandRows(now)
     const rows = Math.min(fullRows, maxRows)
     const { Box, Text, Raster, Image, Client } = $.ui.resolve(e)
@@ -1854,16 +1859,28 @@ export const register: Register = on => {
       <Text dimColor> · </Text>,
       <Text color={color}>{caption}</Text>,
     ]
-    const readout = (
-      <Text wrap="truncate">
-        {runs}
-        <Text dimColor>{SIDE_SEP}</Text>
-        {own}
-      </Text>
+    const block = (
+      <Box flexDirection="column" width={blockWidth}>
+        {hudRows.length > 0 && (
+          <Text wrap="truncate">
+            {hudRows.flatMap((row, i) => (i > 0 ? [<Text dimColor> · </Text>, ...runsOf(row)] : runsOf(row)))}
+          </Text>
+        )}
+        <Text wrap="truncate">
+          {readoutSegs.length > 0 && runsOf(readoutSegs)}
+          {readoutSegs.length > 0 && <Text dimColor>{SIDE_SEP}</Text>}
+          {own}
+        </Text>
+      </Box>
     )
     keepInRange()
     if (rows < 1)
-      return side.width ? <Box flexDirection="column">{below}<Box paddingLeft={1}>{readout}</Box></Box> : <Box flexDirection="column">{below}{alone}</Box>
+      return (
+        <Box flexDirection="column">
+          <Box paddingLeft={1}>{block}</Box>
+          {below}
+        </Box>
+      )
     band = { requestId: e.requestId, cols, rows, maxRows, x: Math.round(x), hop: hopRows(liftAt(Math.round(x))) }
     const f = frameNow(now)
     const flip = facing < 0
@@ -1872,39 +1889,20 @@ export const register: Register = on => {
     const pic = hdOn() ? picture($.plugin.root, spriteOf(playing), f, sizeOf(), flip) : null
     return (
       <Box flexDirection="column">
-        {below}
-        {alone}
         <Box width={cols} height={rows}>
           {pic ? (
-            // kept inside Clawd's range: a picture blanks its whole box, and a readout may sit left of it
             <Box position="absolute" bottom={hopRows(lift)} left={Math.max(minX, Math.min(cols - pic.columns, Math.round(x) + pic.left))}>
               <Image key={RASTER_KEY} source={pic.source} columns={pic.columns} rows={pic.rows} alt=" " />
             </Box>
-          ) : (
-            <Raster key={RASTER_KEY} columns={cols} rows={rows} cells={scene(s, f, cols, rows, Math.round(x), flip, lift)} />
-          )}
+          ) : null /* no blocks, ever: where pictures cannot show, Clawd is left out */}
           <Box position="absolute" top={0} left={0}>
             <Client key="touch" module="./touch.tsx" width={cols} height={rows} />
           </Box>
-          {side.width === 0 ? (
-            <Box position="absolute" bottom={0} left={cap.left} width={width}>
-              <Text wrap="truncate">{own}</Text>
-            </Box>
-          ) : (
-            <Box position="absolute" bottom={0} left={1} width={side.width - SIDE_GAP}>
-              {readout}
-            </Box>
-          )}
-          {hudRows.length > 0 && fullRows <= maxRows && rows > hudRows.length && (
-            // only while Clawd's whole box fits: squeezed (a notice or menu above), the rows would spill over it;
-            // hud-pane's rows, laid over the band's blank rows just above the readout (the band keeps its size)
-            <Box position="absolute" bottom={1} left={1} width={Math.max(10, cols - 2)} flexDirection="column">
-              {hudRows.map(row => (
-                <Text wrap="truncate">{runsOf(row)}</Text>
-              ))}
-            </Box>
-          )}
+          <Box position="absolute" bottom={0} left={1}>
+            {block}
+          </Box>
         </Box>
+        {below}
       </Box>
     )
   })

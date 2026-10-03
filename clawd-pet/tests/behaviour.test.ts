@@ -35,12 +35,13 @@ test('the caption says what Claude is doing', async ($, on) => {
 test('a click on Clawd pats it; one beside it does nothing', async ($, on) => {
   engine(on)
   const ui = await $.ui.mount(BAND)
-  // size 9, standing at column 4: the body covers columns 4-12
-  await ui.pointer({ type: 'down', x: 70, y: 0, button: 'left' } as never)
+  // Clawd stands right of the caption: a click far right of it does nothing
+  const at = Number((await ui.findAll({ type: 'Box' })).find(b => b.props.position === 'absolute' && (b.children as { type?: string }[] | undefined)?.[0]?.type === 'Image')?.props.left)
+  await ui.pointer({ type: 'down', x: at + 40, y: 0, button: 'left' } as never)
   await ui.unmount()
   expect(await caption($)).not.toMatch(/hehe~/)
   const again = await $.ui.mount(BAND)
-  await again.pointer({ type: 'down', x: 6, y: 0, button: 'left' } as never)
+  await again.pointer({ type: 'down', x: at + 2, y: 0, button: 'left' } as never)
   await again.unmount()
   expect(await caption($)).toMatch(/hehe~/)
 })

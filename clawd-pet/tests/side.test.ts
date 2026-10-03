@@ -54,16 +54,9 @@ test('the forecast and Clawd\'s caption share one line; Clawd strolls from its e
     await ui.unmount()
   }
 
-  // narrower: the chart goes first, the caption stays on the line
-  const mid = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 90 } })
-  expect(await mid.find({ type: 'Text', text: /Clear │ / })).toBeDefined()
-  await mid.unmount()
-
-  // too narrow for both on one line: the forecast gets a line of its own above Clawd, never lost
+  // narrow: the compact forecast and the caption still share the one line
   const narrow = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 50 } })
-  expect(await narrow.find({ type: 'Text', text: /^☀ Clear · 19%/ })).toBeDefined()
-  expect(await narrow.find({ type: 'Text', text: /│/ })).toBeUndefined()
-  expect(await narrow.find({ type: 'Text', text: /Lv\.\d+/ })).toBeDefined()
+  expect(await narrow.find({ type: 'Text', text: /Clear │ \S+ Lv\.\d+/ })).toBeDefined()
   await narrow.unmount()
 })
 
@@ -120,24 +113,22 @@ const hud: Register = on => {
   })
 }
 
-test('hud-pane\'s two rows sit just above the readout, laid over the band', { plugins: [{ name: 'token-weather', register: weather }, { name: 'hud-pane', register: hud }] }, async ($, on) => {
+test('hud-pane\'s two rows are one line just above the readout, laid over the band', { plugins: [{ name: 'token-weather', register: weather }, { name: 'hud-pane', register: hud }] }, async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
   await $.turn.complete({ answer: 'done' } as never)
   const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 160 } })
-  expect(await ui.find({ type: 'Text', text: /LOS ANGELES \| ☀️ 33°C/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /demo git:\(main\)/ })).toBeDefined()
-  const box = (await ui.findAll({ type: 'Box' })).find(b => b.props.position === 'absolute' && b.props.bottom === 1)
-  expect(box).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /LOS ANGELES \| ☀️ 33°C.* · demo git:\(main\)/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Clear · 19%.*│ \S+ Lv\.\d+/ })).toBeDefined()
   await ui.unmount()
 })
 
-test('squeezed by a notice above, the band leaves hud-pane\'s rows out', { plugins: [{ name: 'token-weather', register: weather }, { name: 'hud-pane', register: hud }] }, async ($, on) => {
+test('squeezed by a notice above, the text block stays', { plugins: [{ name: 'token-weather', register: weather }, { name: 'hud-pane', register: hud }] }, async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
   await $.turn.complete({ answer: 'done' } as never)
   const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 160, maxRows: 4 } })
-  expect(await ui.find({ type: 'Text', text: /demo git:\(main\)/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /demo git:\(main\)/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -167,5 +158,24 @@ test('Clawd strolls right of hud-pane\'s rows, never under them', { plugins: [{ 
   const left = raster ? leftmostCell(raster) : Number(picture?.props.left)
   expect(Number.isFinite(left)).toBe(true)
   expect(left).toBeGreaterThanOrEqual(1 + widest)
+  await ui.unmount()
+})
+
+test('on the desktop hud-pane\'s two rows are one line of session info: the card is two lines, not three', { plugins: [{ name: 'token-weather', register: weather }, { name: 'hud-pane', register: hud }] }, async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
+  on('turn.complete', async () => ({ text: '' }) as never)
+  await $.turn.complete({ answer: 'done' } as never)
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop', props: { ...BAND.props, bodyColumns: 160 } })
+  expect(await ui.find({ type: 'Text', text: /\[Opus 5\.5 ○ low\] · demo git:\(main\)/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('on the desktop Clawd stands on its lane and rises above it, never spilling below (the card would scroll)', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop', props: { ...BAND.props, bodyColumns: 160 } })
+  const frame = (await ui.findAll({ type: 'Box' })).find(b => b.props.position === 'absolute' && b.children?.some((c: any) => c.type === 'Svg'))
+  expect(frame?.props.alignItems).toBe('flex-end')
+  const svg = String((frame?.children as any[]).find((c: any) => c.type === 'Svg')?.props.source)
+  expect(svg).toMatch(/viewBox="0 -8 48 48"/) // the frame ends at the feet (row 39)
   await ui.unmount()
 })

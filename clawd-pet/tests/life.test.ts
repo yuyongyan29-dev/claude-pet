@@ -137,16 +137,18 @@ test('a terminal not asked about pictures yet never gets blocks', async ($, on) 
   await ui.unmount()
 })
 
-test('a terminal without pictures gets blocks, and pictures are tried again later', async ($, on) => {
+test('a terminal without pictures never gets blocks: Clawd is left out, and pictures are tried again later', async ($, on) => {
   const { clock, blits } = world(on, { refuse: () => 'the Image draws its alt here: the terminal draws no placeholder images' })
   await boot($)
   const ui = await $.ui.mount(band(120))
-  let blocks = false
-  for (let i = 0; i < 30 && !blocks; i++) {
+  let rasters = 0
+  for (let i = 0; i < 30; i++) {
     await clock.advance(1_000)
-    blocks = (await ui.findAll({ type: 'Raster' })).length === 1
+    rasters += (await ui.findAll({ type: 'Raster' })).length
   }
-  expect(blocks).toBe(true)
+  expect(rasters).toBe(0)
+  expect(blits.filter(b => b.cells).length).toBe(0)
+  expect(await ui.find({ type: 'Image' })).toBeFalsy() // no Clawd at all meanwhile
   const pictures = () => blits.filter(b => b.source).length
   const before = pictures()
   await clock.advance(65_000)
@@ -161,10 +163,11 @@ test('pictures that keep failing at start come back by themselves, no /pet hd ne
   await boot($)
   const ui = await $.ui.mount(band(120))
   for (let i = 0; i < 20; i++) await clock.advance(30_000)
-  expect((await ui.findAll({ type: 'Raster' })).length).toBe(1) // blocks meanwhile
+  expect(await ui.find({ type: 'Image' })).toBeFalsy() // no Clawd meanwhile, never blocks
+  expect((await ui.findAll({ type: 'Raster' })).length).toBe(0)
   refusing = false
   for (let i = 0; i < 24; i++) await clock.advance(30_000)
-  expect((await ui.findAll({ type: 'Raster' })).length).toBe(0) // a picture again
+  expect(await ui.find({ type: 'Image' })).toBeTruthy() // a picture again
   await ui.unmount()
 })
 
@@ -412,18 +415,27 @@ test('/pet hat puts a hat on: the pictures come from frames-hat, and off takes i
   await ui.unmount()
 })
 
-test('a hat drawn as blocks too, where the terminal shows no pictures', async ($, on) => {
+test('with a hat on, a terminal without pictures still gets no blocks', async ($, on) => {
   const { clock, blits } = world(on, { tokens: 0, refuse: () => 'no pictures here' })
   await boot($)
   const ui = await $.ui.mount(band(160))
-  await clock.advance(3_000)
-  const bare = blits.filter(b => b.cells).at(-1)?.cells ?? ''
   await pet($, 'hat crown')
-  await clock.advance(3_000)
-  const crowned = blits.filter(b => b.cells).at(-1)?.cells ?? ''
-  expect(crowned).not.toEqual(bare)
-  // the cells are base64 bytes; the crown's gold (#f5c542) is among their colours
-  const bytes = [...atob(crowned)].map(c => c.charCodeAt(0).toString(16).padStart(2, '0')).join('')
-  expect(bytes).toMatch(/42c5f5|f5c542/)
+  await clock.advance(6_000)
+  expect(blits.filter(b => b.cells).length).toBe(0)
+  expect((await ui.findAll({ type: 'Raster' })).length).toBe(0)
+  await ui.unmount()
+})
+
+test('back from the background (the agents view), Clawd is a picture again within seconds', async ($, on) => {
+  let away = true
+  const { clock, blits } = world(on, { refuse: () => (away ? 'the Image draws its alt here: the terminal draws no placeholder images (bg worker)' : undefined) })
+  await boot($)
+  const ui = await $.ui.mount(band(120))
+  await clock.advance(10_000)
+  expect((await pet($, 'stats')).text ?? '').toContain('hidden') // left out meanwhile, never blocks
+  away = false
+  await clock.advance(5_000)
+  expect(await ui.find({ type: 'Image' })).toBeTruthy()
+  expect(blits.filter(b => b.cells).length).toBe(0)
   await ui.unmount()
 })
