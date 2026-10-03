@@ -189,12 +189,14 @@ const imageView: Register = on => {
   })
 }
 
-test('while image-view shows thumbnails Clawd steps out of the band; its caption stays', { plugins: [{ name: 'image-view', register: imageView }] }, async ($, on) => {
+test('pasted images show as thumbnails at the top of Clawd\'s band; Clawd stays', { plugins: [{ name: 'image-view', register: imageView }] }, async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
   on('turn.complete', async () => ({ text: '' }) as never)
   await $.turn.complete({ answer: 'done' } as never)
   const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 160 } })
-  expect(await ui.find({ type: 'Image' })).toBeUndefined()
+  const images = await ui.findAll({ type: 'Image' })
+  expect(images.some(i => (i.props.source as { file?: string }).file === '/tmp/1.png')).toBe(true)
+  expect(await ui.find({ type: 'Text', text: /^#1$/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Lv\.\d+/ })).toBeDefined()
   await ui.unmount()
 })
