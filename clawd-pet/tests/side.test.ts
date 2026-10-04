@@ -180,23 +180,3 @@ test('on the desktop Clawd stands on its lane and rises above it, never spilling
   await ui.unmount()
 })
 
-// image-view as far as Clawd cares: the pasted images it publishes while the draft holds their tags
-const imageView: Register = on => {
-  on('turn.complete', async ($, e, next) => {
-    const r = await next(e)
-    await ($.state.set as any)({ plugin: 'image-view', key: 'images' }, [{ n: 1, path: '/tmp/1.png', size: { width: 10, height: 10 } }])
-    return r
-  })
-}
-
-test('pasted images show as thumbnails at the top of Clawd\'s band; Clawd stays', { plugins: [{ name: 'image-view', register: imageView }] }, async ($, on) => {
-  on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
-  on('turn.complete', async () => ({ text: '' }) as never)
-  await $.turn.complete({ answer: 'done' } as never)
-  const ui = await $.ui.mount({ ...BAND, props: { ...BAND.props, bodyColumns: 160 } })
-  const images = await ui.findAll({ type: 'Image' })
-  expect(images.some(i => (i.props.source as { file?: string }).file === '/tmp/1.png')).toBe(true)
-  expect(await ui.find({ type: 'Text', text: /^#1$/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /Lv\.\d+/ })).toBeDefined()
-  await ui.unmount()
-})

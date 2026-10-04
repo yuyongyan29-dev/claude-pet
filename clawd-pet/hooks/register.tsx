@@ -618,11 +618,6 @@ async function syncClock($: Dollar, force = false) {
 // --- what the other mods are up to, kept from their state writes as they happen (no reads
 // while drawing): token-weather's line and fill, Blast Radius holding a command, Replay Theater
 let sideCache: SideLine | null = null
-// the images pasted into the draft, as image-view finds them: Clawd draws their thumbnails at the
-// top of its band (image-view's own band does not show beside Clawd's)
-type Pasted = { n: number; path: string | null; size: { width: number; height: number } | null }
-let pasted: Pasted[] = []
-const THUMB_ROWS = 6
 let hudRows: Segment[][] = [] // hud-pane's two rows (weather, model, usage; project, git), drawn just above the readout
 let context = 0 // percent of the context window, token-weather's latest reading
 let blastHeld = false
@@ -1045,11 +1040,6 @@ function follow(plugin: string, key: string, value: unknown): boolean {
   if (plugin === 'token-weather' && key === 'line') {
     sideCache = asLine(value)
     return true
-  }
-  if (plugin === 'image-view' && key === 'images') {
-    const was = JSON.stringify(pasted)
-    pasted = Array.isArray(value) ? (value as Pasted[]).filter(p => p && typeof p.n === 'number') : []
-    return was !== JSON.stringify(pasted)
   }
   if (plugin === 'hud-pane' && key === 'rows') {
     hudRows = Array.isArray(value) ? (value as Segment[][]).filter(Array.isArray) : []
@@ -1870,24 +1860,6 @@ export const register: Register = on => {
       <Text dimColor> · </Text>,
       <Text color={color}>{caption}</Text>,
     ]
-    // a cell is about twice as tall as wide: a thumbnail THUMB_ROWS tall keeps the picture's shape
-    const thumbs = pasted.length > 0 && (
-      <Box flexDirection="row" columnGap={1} paddingLeft={1}>
-        {pasted.map(p => {
-          const columns = p.size ? Math.max(4, Math.min(32, Math.round((THUMB_ROWS * 2 * p.size.width) / p.size.height))) : 12
-          return (
-            <Box flexDirection="column" alignItems="center" borderStyle="round" borderDimColor>
-              {p.path ? (
-                <Image key={`paste-${p.n}`} source={{ file: p.path, format: 'png' }} columns={columns} rows={THUMB_ROWS} alt={`[Image #${p.n}]`} />
-              ) : (
-                <Text dimColor>no preview</Text>
-              )}
-              <Text dimColor>#{p.n}</Text>
-            </Box>
-          )
-        })}
-      </Box>
-    )
     const block = (
       <Box flexDirection="column" width={blockWidth}>
         {hudRows.length > 0 && (
@@ -1907,7 +1879,6 @@ export const register: Register = on => {
       band = null
       return (
         <Box flexDirection="column">
-          {thumbs}
           <Box paddingLeft={1}>{block}</Box>
           {below}
         </Box>
@@ -1921,7 +1892,6 @@ export const register: Register = on => {
     const pic = hdOn() ? picture($.plugin.root, spriteOf(playing), f, sizeOf(), flip) : null
     return (
       <Box flexDirection="column">
-        {thumbs}
         <Box width={cols} height={rows}>
           {pic ? (
             <Box position="absolute" bottom={hopRows(lift)} left={Math.max(minX, Math.min(cols - pic.columns, Math.round(x) + pic.left))}>
