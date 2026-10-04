@@ -23,6 +23,9 @@ type Dollar = Parameters<Hook<'turn.complete'>>[0]
 const SLEEP_AFTER_MS = 3 * 60_000
 const TICK_MS = 83
 const RASTER_KEY = 'clawd-pet'
+// the picture's key carries its size: a keyed Image keeps the box it was mounted with, so a new
+// size has to be a new Image (a blit only swaps the source inside the old box)
+const picKey = (size: number) => `${RASTER_KEY}-${size}`
 const SIZE_MIN = 4
 const SIZE_MAX = 40
 const SIZE_DEFAULT = 9
@@ -1329,7 +1332,7 @@ function tick($: Dollar) {
       return
     }
     const pic = picture($.plugin.root, spriteOf(playing), f, sizeOf(), flip)
-    void $.ui.blit({ requestId: band.requestId, key: RASTER_KEY, source: pic.source }).then(
+    void $.ui.blit({ requestId: band.requestId, key: picKey(sizeOf()), source: pic.source }).then(
       r => ('deny' in r && r.deny ? refused($, r.deny) : (hdRefusals = 0)),
       err => refused($, String((err as Error)?.message ?? err)), // a refusal may come as a rejection
     )
@@ -1895,7 +1898,7 @@ export const register: Register = on => {
         <Box width={cols} height={rows}>
           {pic ? (
             <Box position="absolute" bottom={hopRows(lift)} left={Math.max(minX, Math.min(cols - pic.columns, Math.round(x) + pic.left))}>
-              <Image key={RASTER_KEY} source={pic.source} columns={pic.columns} rows={pic.rows} alt=" " />
+              <Image key={picKey(sizeOf())} source={pic.source} columns={pic.columns} rows={pic.rows} alt=" " />
             </Box>
           ) : null /* no blocks, ever: where pictures cannot show, Clawd is left out */}
           <Box position="absolute" top={0} left={0}>

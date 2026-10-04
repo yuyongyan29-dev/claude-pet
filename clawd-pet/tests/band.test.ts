@@ -37,3 +37,20 @@ test('the band keeps one height while Clawd strolls and works, and the picture s
   expect(after.height).toBeGreaterThanOrEqual(resting.height)
   expect(after.reach).toBeLessThanOrEqual(after.height)
 })
+
+test('a new size is a new picture, as big as the size asks', async ($, on) => {
+  on('command.run', async () => ({ text: '' }) as never)
+  on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
+  const BIG = { plugin: 'clawd-pet', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 30, bodyColumns: 160, scroll: { offset: 0, bodyRows: 30 }, view: {} } } as const
+  const sizes: [unknown, unknown][] = []
+  for (const size of [6, 10]) {
+    await $.command.run({ command: 'pet', args: `size ${size}` } as never)
+    const ui = await $.ui.mount(BIG as never)
+    const image = await ui.find({ type: 'Image' })
+    sizes.push([image?.props.columns, image?.key ?? image?.props.key])
+    await ui.unmount()
+  }
+  expect(sizes[0]![0]).toBe(12)
+  expect(sizes[1]![0]).toBe(20)
+  expect(sizes[0]![1]).not.toBe(sizes[1]![1])
+})
