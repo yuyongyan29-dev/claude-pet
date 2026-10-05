@@ -2,30 +2,17 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="https://github.com/yuyongyan29-dev/claude-pet"><strong>⭐ Star this repo</strong></a> ·
+  <a href="#commands">Commands</a>
+</p>
+
 <p align="center"><img src="docs/hero.gif" alt="Clawd walking" width="640"></p>
 
 **Clawd** is a pixel pet that strolls along the band above your Claude Code prompt and reacts to what Claude is doing: chin in hand while thinking, looking around while searching, typing on a laptop while running commands, waving when it's waiting for you, and dozing off late at night.
 
-## Moves
-
-| | | | |
-|:-:|:-:|:-:|:-:|
-| <img src="docs/think.gif" width="144" alt="thinking"> | <img src="docs/laptop.gif" width="144" alt="running a command"> | <img src="docs/wave.gif" width="144" alt="waiting for you"> | <img src="docs/lightbulb.gif" width="144" alt="/pet idea"> |
-| thinking | running a command | waiting for you | /pet idea |
-| <img src="docs/dance.gif" width="144" alt="/pet dance"> | <img src="docs/breakdance.gif" width="144" alt="/pet breakdance"> | <img src="docs/hula.gif" width="144" alt="/pet hula"> | <img src="docs/jump.gif" width="144" alt="/pet jump"> |
-| /pet dance | /pet breakdance | /pet hula | /pet jump |
-| <img src="docs/confetti.gif" width="144" alt="/pet party"> | <img src="docs/meditate.gif" width="144" alt="/pet meditate"> | <img src="docs/dizzy.gif" width="144" alt="/pet spin · clicked too much"> | <img src="docs/hats.gif" width="144" alt="/pet hat …"> |
-| /pet party | /pet meditate | /pet spin · clicked too much | /pet hat … |
-
-
-## Features
-
-- **Follows Claude's state**: thinking, searching, editing, running commands, calling subagents, waiting for your answer, or running low on context — each has its own animation and caption.
-- **Grows with you**: feed it and pat it. Its level tracks your lifetime Claude Code token usage (one level per 100M tokens) and unlocks new moves and titles (Hatchling → Explorer → Dancer → … → Infinite).
-- **Hats**: wizard hat, ninja headband, top hat, cowboy hat, astronaut helmet, crown.
-- **Click to interact**: click Clawd to pat it; click too much and it gets dizzy.
-- **Pixel-perfect where possible**: drawn as a real image in Ghostty, kitty and iTerm2; block characters elsewhere. Works in the desktop app's Code tab too.
-- **Optional sounds**: tiny chiptune reactions, off by default.
+> **Like Clawd? [Give Claude Pet a star ⭐](https://github.com/yuyongyan29-dev/claude-pet)** — click **Star** at the top right of this repository. It helps other Claude Code users discover their next coding companion.
 
 ## Requirements
 
@@ -54,6 +41,27 @@ Start a new session and Clawd appears above the prompt.
 ```
 /plugin uninstall clawd-pet@claude-pet-market
 ```
+
+## Moves
+
+| | | | |
+|:-:|:-:|:-:|:-:|
+| <img src="docs/think.gif" width="144" alt="thinking"> | <img src="docs/laptop.gif" width="144" alt="running a command"> | <img src="docs/wave.gif" width="144" alt="waiting for you"> | <img src="docs/lightbulb.gif" width="144" alt="/pet idea"> |
+| thinking | running a command | waiting for you | /pet idea |
+| <img src="docs/dance.gif" width="144" alt="/pet dance"> | <img src="docs/breakdance.gif" width="144" alt="/pet breakdance"> | <img src="docs/hula.gif" width="144" alt="/pet hula"> | <img src="docs/jump.gif" width="144" alt="/pet jump"> |
+| /pet dance | /pet breakdance | /pet hula | /pet jump |
+| <img src="docs/confetti.gif" width="144" alt="/pet party"> | <img src="docs/meditate.gif" width="144" alt="/pet meditate"> | <img src="docs/dizzy.gif" width="144" alt="/pet spin · clicked too much"> | <img src="docs/hats.gif" width="144" alt="/pet hat …"> |
+| /pet party | /pet meditate | /pet spin · clicked too much | /pet hat … |
+
+
+## Features
+
+- **Follows Claude's state**: thinking, searching, editing, running commands, calling subagents, waiting for your answer, or running low on context — each has its own animation and caption.
+- **Grows with you**: feed it and pat it. Its level tracks your lifetime Claude Code token usage (one level per 100M tokens) and unlocks new moves and titles (Hatchling → Explorer → Dancer → … → Infinite).
+- **Hats**: wizard hat, ninja headband, top hat, cowboy hat, astronaut helmet, crown.
+- **Click to interact**: click Clawd to pat it; click too much and it gets dizzy.
+- **Pixel-perfect where possible**: drawn as a real image in Ghostty, kitty and iTerm2; block characters elsewhere. Works in the desktop app's Code tab too.
+- **Optional sounds**: tiny chiptune reactions, off by default.
 
 ## Commands
 

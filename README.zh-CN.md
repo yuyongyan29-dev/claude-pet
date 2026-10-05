@@ -2,31 +2,17 @@
 
 [English](README.md) · **简体中文**
 
+<p align="center">
+  <a href="#安装">安装</a> ·
+  <a href="https://github.com/yuyongyan29-dev/claude-pet"><strong>⭐ 给仓库点 Star</strong></a> ·
+  <a href="#命令">命令</a>
+</p>
+
 <p align="center"><img src="docs/hero.gif" alt="Clawd walking" width="640"></p>
 
 **Clawd** 是一只像素宠物，它在 Claude Code 输入框上方来回散步，并对 Claude 正在做的事做出反应：思考时托腮，搜索时东张西望，跑命令时敲笔记本，等你回答时挥手，深夜会打瞌睡。
 
-## 动作一览
-
-| | | | |
-|:-:|:-:|:-:|:-:|
-| <img src="docs/think.gif" width="144" alt="思考"> | <img src="docs/laptop.gif" width="144" alt="跑命令"> | <img src="docs/wave.gif" width="144" alt="等你回答"> | <img src="docs/lightbulb.gif" width="144" alt="/pet idea"> |
-| 思考 | 跑命令 | 等你回答 | /pet idea |
-| <img src="docs/dance.gif" width="144" alt="/pet dance"> | <img src="docs/breakdance.gif" width="144" alt="/pet breakdance"> | <img src="docs/hula.gif" width="144" alt="/pet hula"> | <img src="docs/jump.gif" width="144" alt="/pet jump"> |
-| /pet dance | /pet breakdance | /pet hula | /pet jump |
-| <img src="docs/confetti.gif" width="144" alt="/pet party"> | <img src="docs/meditate.gif" width="144" alt="/pet meditate"> | <img src="docs/dizzy.gif" width="144" alt="/pet spin · 连点太多"> | <img src="docs/hats.gif" width="144" alt="/pet hat …"> |
-| /pet party | /pet meditate | /pet spin · 连点太多 | /pet hat … |
-
-
-
-## 功能
-
-- **跟随 Claude 的状态**：思考、搜索、编辑、执行命令、调用子代理、等待你回答、上下文快满时，Clawd 各有不同动作和气泡。
-- **养成**：可以喂食、抚摸；等级按 Claude Code 累计消耗的 token 计算（每 1 亿 token 升 1 级），升级会解锁新动作和称号（Hatchling → Explorer → Dancer → … → Infinite）。
-- **帽子**：巫师帽、忍者头带、礼帽、牛仔帽、宇航员头盔、皇冠。
-- **点击互动**：点一下 Clawd 就是摸摸它，连点太多它会转晕。
-- **图片终端高清显示**：在 Ghostty、kitty、iTerm2 中按像素图绘制；其他终端用方块字符绘制。桌面版 Code 标签页同样可用。
-- **可选音效**：反应时的小段 8-bit 音效，默认关闭。
+> **喜欢 Clawd？[给 Claude Pet 一颗 Star ⭐](https://github.com/yuyongyan29-dev/claude-pet)** — 点击仓库右上角的 **Star**，让更多 Claude Code 用户发现这只编程小伙伴。
 
 ## 环境要求
 
@@ -55,6 +41,28 @@
 ```
 /plugin uninstall clawd-pet@claude-pet-market
 ```
+
+## 动作一览
+
+| | | | |
+|:-:|:-:|:-:|:-:|
+| <img src="docs/think.gif" width="144" alt="思考"> | <img src="docs/laptop.gif" width="144" alt="跑命令"> | <img src="docs/wave.gif" width="144" alt="等你回答"> | <img src="docs/lightbulb.gif" width="144" alt="/pet idea"> |
+| 思考 | 跑命令 | 等你回答 | /pet idea |
+| <img src="docs/dance.gif" width="144" alt="/pet dance"> | <img src="docs/breakdance.gif" width="144" alt="/pet breakdance"> | <img src="docs/hula.gif" width="144" alt="/pet hula"> | <img src="docs/jump.gif" width="144" alt="/pet jump"> |
+| /pet dance | /pet breakdance | /pet hula | /pet jump |
+| <img src="docs/confetti.gif" width="144" alt="/pet party"> | <img src="docs/meditate.gif" width="144" alt="/pet meditate"> | <img src="docs/dizzy.gif" width="144" alt="/pet spin · 连点太多"> | <img src="docs/hats.gif" width="144" alt="/pet hat …"> |
+| /pet party | /pet meditate | /pet spin · 连点太多 | /pet hat … |
+
+
+
+## 功能
+
+- **跟随 Claude 的状态**：思考、搜索、编辑、执行命令、调用子代理、等待你回答、上下文快满时，Clawd 各有不同动作和气泡。
+- **养成**：可以喂食、抚摸；等级按 Claude Code 累计消耗的 token 计算（每 1 亿 token 升 1 级），升级会解锁新动作和称号（Hatchling → Explorer → Dancer → … → Infinite）。
+- **帽子**：巫师帽、忍者头带、礼帽、牛仔帽、宇航员头盔、皇冠。
+- **点击互动**：点一下 Clawd 就是摸摸它，连点太多它会转晕。
+- **图片终端高清显示**：在 Ghostty、kitty、iTerm2 中按像素图绘制；其他终端用方块字符绘制。桌面版 Code 标签页同样可用。
+- **可选音效**：反应时的小段 8-bit 音效，默认关闭。
 
 ## 命令
 
