@@ -16,7 +16,8 @@
 
 ## 环境要求
 
-- 支持 **mods**（插件通过 `hooks/hooks.json` 中的 `modules` 加载函数式 hooks）的 Claude Code 版本，终端 CLI 或桌面应用的 Code 标签页均可。
+- 终端需要 Claude Code **2.1.287+**；桌面版 Code 标签页内的 Claude Code 需要 **2.1.286+**，见[官方版本要求](https://code.claude.com/docs/en/plugins/mods/overview#turn-mods-on-or-off)。本地验证使用 2.1.292。
+- 宠物界面适用于交互式终端和桌面 Code 标签页；`claude -p`、VS Code 扩展面板和云端会话不会显示。桌面版运行在 WSL 中的会话不支持 mods。
 - 想看到像素级画面，建议使用 Ghostty、kitty 或 iTerm2。
 
 ## 安装
@@ -34,6 +35,7 @@
 
 ```
 /plugin marketplace update claude-pet-market
+/plugin update clawd-pet@claude-pet-market
 ```
 
 **卸载**：
@@ -66,7 +68,7 @@
 
 ## 命令
 
-所有操作都通过 `/pet` 完成，`/pet help` 可随时查看。
+随时执行 `/clawd-pet help` 查看命令。其他 mod 没有注册 `/pet` 时，它可作为简写。下表的所有命令都可以把 `/pet` 换成 `/clawd-pet`。
 
 | 命令 | 作用 |
 | --- | --- |
@@ -83,13 +85,27 @@
 
 ## 数据存储
 
-宠物状态（名字、等级、饱食度、帽子、大小等）保存在 Claude 配置目录下的 `clawd-pet.json`（通常是 `~/.claude/clawd-pet.json`）。删除该文件即可重置。插件不联网，不上传任何数据。
+设置、养成状态和 token 计数保存在 Claude Code 的插件存储中。每个会话写入自己的记录，并发会话不会覆盖彼此的 token 增量或不同设置。记录较大或超过插件存储容量时，会存档到 Claude 配置目录的 `clawd-pet-history/`。已有的 `clawd-pet.json` 会被导入，原文件保持不变。
+
+配置目录优先使用 `CLAUDE_CONFIG_DIR`，其次是 `HOME/.claude`，Windows 上还支持 `USERPROFILE/.claude`。如需重置，请先关闭所有使用此 mod 的会话，再删除配置目录下 `plugins/store/` 中属于本插件的存储文件（保留其他插件的文件），以及存在的 `clawd-pet.json` 和 `clawd-pet-history/`。Claude Code 可能根据 `cleanupPeriodDays` 设置清理长期未使用的插件存储。插件不联网，不上传任何数据。
 
 ## 常见问题
 
-- **装好了看不到 Clawd？** 先执行 `/pet` 确认没被隐藏；再确认 Claude Code 版本支持 mods；最后重开会话。
-- **显示成方块而不是像素图？** 当前终端不支持图片协议。换用 Ghostty / kitty / iTerm2，或执行 `/pet hd` 切换。
+- **装好了看不到 Clawd？** 执行 `/clawd-pet show`，检查版本及 `/plugin` 中的已启用 mods，再重开会话。如果其他 mod 占满输入框上方的区域，请增大终端窗口。
+- **显示成方块而不是像素图？** 图片不可用时会自动改用方块，稍后重试。`/clawd-pet pixel` 保持方块模式，`/clawd-pet hd` 重新尝试图片。Ghostty / kitty / iTerm2 支持图片显示。
 - **太大或太小？** `/pet size 4` 到 `/pet size 40` 自由调整。
+
+## 兼容性与开发
+
+Clawd 会保留其他 mod 的区域内容，根据剩余空间缩小；没有剩余行时让出位置。发布了可选 forecast 接口的 token-weather 可与 Clawd 共用一行；没有这个接口的原版继续独立显示。如果其他 mod 直接替换整个区域且不包含 `next(e)` 的结果，仍可能遮住 Clawd 和其他 mod。
+
+见[兼容性说明及官方 API 参考](docs/mod-compatibility.md)。在仓库根目录执行：
+
+```sh
+claude plugin validate clawd-pet
+claude plugin validate .
+claude plugin test clawd-pet
+```
 
 ## 许可证
 

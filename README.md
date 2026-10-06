@@ -16,7 +16,8 @@
 
 ## Requirements
 
-- A Claude Code build that supports **mods** (plugins whose `hooks/hooks.json` loads `modules`), in the terminal CLI or the desktop app's Code tab.
+- Claude Code **2.1.287+** in the terminal, or **2.1.286+** in the desktop app's Code tab, per the [official mods requirements](https://code.claude.com/docs/en/plugins/mods/overview#turn-mods-on-or-off). Local validation uses 2.1.292.
+- The pet UI appears in interactive terminal sessions and the desktop Code tab. It does not appear in `claude -p`, the VS Code extension panel, or cloud sessions; Desktop sessions running in WSL do not support mods.
 - For the pixel image, use Ghostty, kitty or iTerm2.
 
 ## Install
@@ -34,6 +35,7 @@ Start a new session and Clawd appears above the prompt.
 
 ```
 /plugin marketplace update claude-pet-market
+/plugin update clawd-pet@claude-pet-market
 ```
 
 **Uninstall**
@@ -65,7 +67,7 @@ Start a new session and Clawd appears above the prompt.
 
 ## Commands
 
-Everything is a `/pet` subcommand; `/pet help` lists them anytime.
+Use `/clawd-pet help` anytime. `/pet` is a shorter alias when another mod has not registered that name. Every command below also works with `/clawd-pet` in place of `/pet`.
 
 | Command | What it does |
 | --- | --- |
@@ -82,13 +84,27 @@ Everything is a `/pet` subcommand; `/pet help` lists them anytime.
 
 ## Data
 
-Pet state (name, level, hunger, hat, size…) is saved in `clawd-pet.json` in your Claude config directory (usually `~/.claude/clawd-pet.json`). Delete it to start over. The plugin makes no network requests and uploads nothing.
+Settings, care, and token counts persist locally in Claude Code's plugin store. Each session writes its own record, so simultaneous sessions retain token increments and changes to different settings. Large records, or saves exceeding the store limit, are archived in `clawd-pet-history/` in your Claude config directory. Existing `clawd-pet.json` saves are imported and left untouched.
+
+The config directory comes from `CLAUDE_CONFIG_DIR`, or `HOME/.claude`, or `USERPROFILE/.claude` on Windows. To start over, close all sessions using this mod, remove its plugin store file under the config directory's `plugins/store/` (leave other plugins' files alone), and remove `clawd-pet.json` and `clawd-pet-history/` if present. Claude Code may expire an unused plugin store according to its `cleanupPeriodDays` setting. The plugin makes no network requests and uploads nothing.
 
 ## FAQ
 
-- **Installed but no Clawd?** Run `/pet` in case it's hidden, check that your Claude Code supports mods, then start a new session.
-- **Blocks instead of a pixel image?** Your terminal doesn't support an image protocol. Use Ghostty / kitty / iTerm2, or try `/pet hd`.
+- **Installed but no Clawd?** Run `/clawd-pet show`, check the version and the active mods listed in `/plugin`, then start a new session. Enlarge the terminal if another mod uses all the band's available rows.
+- **Blocks instead of a pixel image?** Clawd falls back to blocks when images are unavailable and retries later. `/clawd-pet pixel` keeps block mode; `/clawd-pet hd` tries images again. Use Ghostty / kitty / iTerm2 for image support.
 - **Too big or too small?** Anything from `/pet size 4` to `/pet size 40`.
+
+## Compatibility and development
+
+Clawd preserves other mods' band content and shrinks to the space left; it yields when no rows remain. Published token-weather forecasts can share its caption line. Stock versions without that optional contract keep their own display. A mod that replaces the entire band without including `next(e)` can still hide other mods, including Clawd.
+
+See [compatibility notes and official API references](docs/mod-compatibility.md). Run the native checks from the repository root:
+
+```sh
+claude plugin validate clawd-pet
+claude plugin validate .
+claude plugin test clawd-pet
+```
 
 ## Repository layout
 

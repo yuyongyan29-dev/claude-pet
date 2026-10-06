@@ -2,6 +2,9 @@ import type { Hook, Register, Timer } from 'claude-code'
 
 import { HATS, HEADS } from './hats'
 import { CLIPS, SPRITES } from './sprites'
+import { mergeSaved } from './storage'
+import type { DayTokens, Pet, Saved, Journal } from './storage'
+import { terminalRows } from './layout'
 
 /**
  * clawd-pet: Clawd strolling along the band above the prompt, drawn from the official
@@ -12,11 +15,10 @@ import { CLIPS, SPRITES } from './sprites'
  * Each animation is decoded once onto a shared canvas anchored at Clawd's feet, then resampled
  * for the terminal into quarter-block sub-pixels (two by two per cell, the way the Claude Code
  * logo is drawn) at any size: `size` is how many columns Clawd's body spans. The band is one
- * Raster as wide as the prompt; Clawd wanders across it, mirrored when walking left, and the
- * frames are repainted in place with $.ui.blit. Everything else is a /pet subcommand.
+ * Raster in its own lane; Clawd wanders across it, mirrored when walking left, and the
+ * frames are repainted in place with $.ui.blit. Commands use /clawd-pet or the free /pet alias.
  */
 
-type Pet = { food: number; love: number; xp: number; hidden: boolean; savedAt: number; size?: number; name?: string; still?: boolean; merged?: boolean; hd?: boolean; sound?: boolean; hat?: string }
 type Mood = 'think' | 'search' | 'edit' | 'shell' | 'agent' | 'work' | 'idle' | 'sleep' | 'hungry' | 'alarm' | 'ask' | 'watch' | 'crowded'
 type Dollar = Parameters<Hook<'turn.complete'>>[0]
 
@@ -29,7 +31,6 @@ const picKey = (size: number) => `${RASTER_KEY}-${size}`
 const SIZE_MIN = 4
 const SIZE_MAX = 40
 const SIZE_DEFAULT = 9
-const INLINE_XP = 155
 const HOLD_MS = 20_000 // a taller band stays this long after a turn before it shrinks back
 const SLEEP_FRAME_MS = 250 // asleep, Clawd breathes at 4 fps
 const DEEP_SLEEP_MS = 10 * 60_000 // after this long with nothing happening, Clawd holds still
@@ -655,7 +656,9 @@ let playing = 'stand'
 let playingAt = 0
 let lastPaint = ''
 let desktop: { at: number; caption: string } | null = null
-let band: { requestId: string; cols: number; rows: number; maxRows: number; x: number; hop: number } | null = null
+let band: { requestId: string; cols: number; rows: number; maxRows: number; x: number; hop: number; laneLeft: number; image: boolean } | null = null
+let renderSize: number | null = null
+const drawingSize = () => renderSize ?? sizeOf()
 // a picture hops whole rows: up one while it is over the caption
 const hopRows = (lift: number) => (lift >= 2 ? 1 : 0)
 let held = { size: 0, rows: 0, until: 0 }
@@ -668,9 +671,23 @@ let lastSave = clockNow()
 let x = 4
 let facing = 1
 // Clawd drawn as a picture, pixel for pixel, unless turned off or the terminal cannot show one
-// Clawd is always a picture, pixel for pixel; blocks only where the terminal cannot show one
 let hd = true
 const hdOn = () => hd
+let background = false
+let petAlias = false
+let hosting = true
+let foodGains = 0
+let loveGains = 0
+function addFood(amount: number) {
+  const before = pet.food
+  pet.food = clamp(pet.food + amount)
+  foodGains += pet.food - before
+}
+function addLove(amount: number) {
+  const before = pet.love
+  pet.love = clamp(pet.love + amount)
+  loveGains += pet.love - before
+}
 // A refused picture is not always a terminal without pictures: right after start the engine has
 // not asked the terminal yet, and between drawings nothing is mounted. Pictures come back when
 // that passes; only a terminal that keeps refusing keeps the blocks.
@@ -679,8 +696,9 @@ let hdRefusals = 0
 const HD_TRIES = 3 // quick retries, a minute apart; slower ones after that
 const HD_RETRY_LATER_MS = 5 * 60_000
 function retryPictures(now: number): boolean {
-  if (hd || hdRetryAt === 0 || now < hdRetryAt) return false
+  if (pet.hd === false || hd || hdRetryAt === 0 || now < hdRetryAt) return false
   hd = true
+  background = false
   hdRetryAt = 0
   return true
 }
@@ -691,7 +709,6 @@ const clamp = (n: number) => Math.max(0, Math.min(100, n))
 // per local day in its store (every session adds to the same days) until stats-cache catches up.
 const TOKENS_PER_LEVEL = 100_000_000
 const STATS_REFRESH_MS = 5 * 60_000
-type DayTokens = Record<string, number>
 let statsBase = 0
 let statsThrough = '' // the last day stats-cache.json has counted, YYYY-MM-DD
 let statsReadAt = 0
@@ -768,7 +785,7 @@ function enterMood(mood: Mood, from: Mood, now: number) {
 /** Columns between Clawd's body and the caption; negative while they overlap. */
 /** The columns Clawd takes at `at`: its body, or a picture's whole box. */
 function span(at: number): [number, number] {
-  return hdOn() ? [at + picLeft(sizeOf()), 2 * sizeOf()] : [at, sizeOf()]
+  return hdOn() ? [at + picLeft(drawingSize()), 2 * drawingSize()] : [at, drawingSize()]
 }
 
 function capGap(at: number): number {
@@ -1017,7 +1034,14 @@ const CAP_ROOM = 18 // columns kept for what Clawd is doing when deciding if the
 
 /** Tells token-weather whether Clawd draws its line (and so it should not draw its own). */
 async function syncHosts($: Dollar) {
-  await $.state.set(HOSTS, pet.hidden ? [] : ['token-weather']).catch(() => {})
+  await $.state.set(HOSTS, pet.hidden || !hosting || !sideCache ? [] : ['token-weather']).catch(() => {})
+}
+
+function hostingRoom($: Dollar, available: boolean) {
+  if (hosting === available) return
+  hosting = available
+  // state writes are prohibited during ui.render; publish after this render finishes.
+  $.clock.after(0, () => void syncHosts($))
 }
 
 // the other mods' values Clawd follows, each named where it is read (the engine lists them)
@@ -1030,8 +1054,9 @@ type OtherGet = (ref: { plugin: string; key: string }) => Promise<{ value?: unkn
 /** A read of another plugin's value: undefined when that plugin is not here. */
 const valueOf = (read: Promise<{ value?: unknown }>) => read.then(r => r.value).catch(() => undefined)
 
+const isSegments = (v: unknown): v is Segment[] => Array.isArray(v) && v.every(seg => seg && typeof seg.children === 'string')
 const asLine = (v: unknown): SideLine | null =>
-  v && typeof v === 'object' && Array.isArray((v as SideLine).full) ? (v as SideLine) : null
+  v && typeof v === 'object' && isSegments((v as SideLine).full) && isSegments((v as SideLine).compact) ? (v as SideLine) : null
 type Reading = { percent?: number }
 const lastPercent = (v: unknown) => (Array.isArray(v) && v.length ? Number((v[v.length - 1] as Reading).percent) || 0 : 0)
 type ReplayState = { isOpen?: boolean; index?: number }
@@ -1045,7 +1070,7 @@ function follow(plugin: string, key: string, value: unknown): boolean {
     return true
   }
   if (plugin === 'hud-pane' && key === 'rows') {
-    hudRows = Array.isArray(value) ? (value as Segment[][]).filter(Array.isArray) : []
+    hudRows = Array.isArray(value) ? value.filter(isSegments) : []
     return true
   }
   if (plugin === 'token-weather' && key === 'readings') {
@@ -1098,6 +1123,17 @@ async function catchUp($: Dollar) {
   if (!cheeredAt) cheeredAt = ((await valueOf(($.state.get as unknown as OtherGet)(ACHIEVEMENT))) as { at?: number } | undefined)?.at || 1
 }
 
+/** Reread the accepted value: a later hook may have rewritten the attempted write. */
+async function readFollowed($: Dollar, plugin: string, key: string) {
+  if (plugin === 'token-weather' && key === 'line') return valueOf(($.state.get as unknown as OtherGet)(SIDE))
+  if (plugin === 'token-weather' && key === 'readings') return valueOf(($.state.get as unknown as OtherGet)(TW_READINGS))
+  if (plugin === 'blast-radius' && key === 'held') return valueOf(($.state.get as unknown as OtherGet)(BLAST_HELD))
+  if (plugin === 'hud-pane' && key === 'rows') return valueOf(($.state.get as unknown as OtherGet)(HUD_ROWS))
+  if (plugin === 'replay-theater' && key === 'state') return valueOf(($.state.get as unknown as OtherGet)(REPLAY_STATE))
+  if (plugin === 'achievements' && key === 'latest') return valueOf(($.state.get as unknown as OtherGet)(ACHIEVEMENT))
+  return undefined
+}
+
 /** Asks the machine its hour now and then: late at night Clawd gets sleepy sooner. */
 async function checkNight($: Dollar, now: number) {
   if (now - nightCheckedAt < NIGHT_CHECK_MS) return
@@ -1127,40 +1163,137 @@ function fitSide(line: SideLine | null, total: number): { segments: Segment[]; w
   return { segments: [], width: 0 }
 }
 
-// One save for every Claude Code that runs Clawd, the terminal's and the desktop app's (which loads
-// the plugin under another name, so its $.store is another): <config dir>/clawd-pet.json.
-type Saved = { pet?: Pet; tokens?: DayTokens }
-let savedAt = ''
-async function claudeDir($: Dollar) {
-  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${(await $.env.get('HOME')) ?? ''}/.claude`
-}
-async function savedFile($: Dollar) {
-  if (!savedAt) savedAt = `${await claudeDir($)}/clawd-pet.json`
-  return savedAt
-}
-/** The shared save; before it exists, what this plugin's own store held, so nothing is lost. */
-async function readSaved($: Dollar): Promise<Saved> {
-  const file = await savedFile($)
-  if (await $.fs.exists(file).catch(() => false)) {
-    try {
-      return JSON.parse(await $.fs.read(file)) as Saved
-    } catch {
-      return {} // caught mid-write by another session: nothing this time
-    }
-  }
-  return {
-    pet: (await $.store.get('pet').catch(() => undefined)) as Pet | undefined,
-    tokens: (await $.store.get('tokens').catch(() => undefined)) as DayTokens | undefined,
-  }
-}
-async function writeSaved($: Dollar, part: Saved) {
-  const next = { ...(await readSaved($)), ...part }
-  await $.fs.write(await savedFile($), `${JSON.stringify(next, null, 2)}\n`).catch(err => $.ui.log(`clawd-pet: save failed: ${err}`))
+const SAVED_SETTINGS = ['size', 'name', 'still', 'hd', 'sound', 'hat'] as const
+let directory = ''
+let journalKey = ''
+let journal: Journal | undefined
+let dirty = false
+let previous: Pet | undefined
+let pending: Promise<void> = Promise.resolve()
+
+function serialized<T>(task: () => Promise<T>): Promise<T> {
+  const result = pending.then(task)
+  pending = result.then(() => {}, () => {})
+  return result
 }
 
+async function claudeDir($: Dollar) {
+  if (directory) return directory
+  const configured = await $.env.get('CLAUDE_CONFIG_DIR')
+  const home = (await $.env.get('HOME')) || (await $.env.get('USERPROFILE'))
+  if (!configured && !home) throw new Error('Clawd cannot locate the Claude configuration directory: set CLAUDE_CONFIG_DIR.')
+  directory = configured || `${home}/.claude`
+  return directory
+}
+async function legacySave($: Dollar, dir: string): Promise<Saved | undefined> {
+  const file = `${dir}/clawd-pet.json`
+  if (!(await $.fs.exists(file).catch(() => false))) return undefined
+  try { return JSON.parse(await $.fs.read(file)) as Saved } catch {
+    throw new Error('Clawd could not read clawd-pet.json; the existing save was left untouched.')
+  }
+}
+
+function readSaved($: Dollar): Promise<Saved> {
+  // Keep a read from straddling this runtime's archive rotation. Other runtimes
+  // write independent keys; their latest completed records appear on refresh.
+  return serialized(() => loadSaved($))
+}
+
+async function loadSaved($: Dollar): Promise<Saved> {
+  const dir = await claudeDir($)
+  const records = new Map<string, Journal>()
+  for (const key of await $.store.keys()) {
+    if (!key.startsWith('journal:') || key === journalKey) continue
+    const part = await $.store.get(key) as Journal | undefined
+    if (part?.base?.pet && Array.isArray(part.changes) && part.tokens && typeof part.tokens === 'object') records.set(key, part)
+  }
+  for (const entry of await $.fs.list(`${dir}/clawd-pet-history`).catch(() => [])) {
+    if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
+    try {
+      const part = JSON.parse(await $.fs.read(`${dir}/clawd-pet-history/${entry.name}`)) as Journal
+      if (part.base?.pet && Array.isArray(part.changes) && part.tokens && typeof part.tokens === 'object') records.set(`journal:${entry.name.slice(0, -5)}`, part)
+    } catch { /* a new immutable archive may still be being written; retry on the next refresh */ }
+  }
+  if (journal) records.set(journalKey, journal)
+  // Consistent tie ordering for changes made in the same millisecond, on both surfaces.
+  const parts = [...records].sort(([a], [b]) => a.localeCompare(b)).map(([, part]) => part)
+  let base = await legacySave($, dir)
+  if (!base) {
+    base = parts.map(part => part.base).sort((a, b) => (a.pet?.savedAt ?? 0) - (b.pet?.savedAt ?? 0))[0]
+    if (!base) base = {
+      pet: (await $.store.get('pet').catch(() => undefined)) as Pet | undefined,
+      tokens: (await $.store.get('tokens').catch(() => undefined)) as DayTokens | undefined,
+    }
+  }
+  base.pet ??= { food: 80, love: 60, xp: 0, hidden: false, savedAt: await $.clock.now() }
+  if (!journal) {
+    journal = { base: JSON.parse(JSON.stringify(base)) as Saved, changes: [], tokens: {} }
+    journalKey = `journal:${crypto.randomUUID()}`
+    dirty = true
+    parts.push(journal)
+  }
+  return mergeSaved(base, parts)
+}
+
+function loadedPet(pet: Pet) { previous = { ...pet } }
+
+async function writeJournal($: Dollar) {
+  if (!journal || !dirty) return
+  const text = JSON.stringify(journal)
+  // The plugin store has a 4 MiB total limit. Small active records use it; completed
+  // chunks go to unique files that no other session rewrites. Never delete before writing.
+  if (text.length < 64_000) {
+    try { await $.store.set(journalKey, journal); dirty = false; return } catch (err) {
+      $.ui.log(`clawd-pet: plugin store unavailable (${err}); archiving this save instead`)
+    }
+  }
+  const dir = await claudeDir($)
+  await $.fs.write(`${dir}/clawd-pet-history/${journalKey.slice(8)}.json`, text)
+  // A leftover store copy is harmless: readSaved deduplicates by the archive id.
+  await $.store.delete(journalKey).catch(() => {})
+  journal = { base: journal.base, changes: [], tokens: {} }
+  journalKey = `journal:${crypto.randomUUID()}`
+  dirty = false
+}
+
+function persist($: Dollar, apply: () => void): Promise<void> {
+  // Serialize mutations as well as writes, so rotating a chunk cannot strand new gains.
+  return serialized(async () => { apply(); await writeJournal($) }).catch(err => { $.ui.log(`clawd-pet: save failed: ${err}`) })
+}
+
+/** Only changed settings and actual care gains are recorded; stale snapshots never overwrite them. */
+async function savePet($: Dollar, pet: Pet, food: number, love: number) {
+  if (!journal) await readSaved($)
+  const settings: Record<string, unknown> = {}
+  for (const key of SAVED_SETTINGS) if (pet[key] !== previous?.[key]) settings[key] = pet[key] ?? null
+  previous = { ...pet }
+  const at = pet.savedAt
+  await persist($, () => {
+    if (food || love || Object.keys(settings).length) {
+      journal!.changes.push({ at, food, love, settings })
+      dirty = true
+    }
+  })
+}
+
+async function addTokens($: Dollar, day: string, tokens: number): Promise<DayTokens> {
+  if (!journal) await readSaved($)
+  await persist($, () => {
+    if (tokens > 0) {
+      journal!.tokens[day] = (journal!.tokens[day] ?? 0) + tokens
+      dirty = true
+    }
+  })
+  return (await readSaved($)).tokens ?? {}
+}
+
+/** Care and changed settings go to this session's journal; hidden remains session-local. */
 async function save($: Dollar) {
   pet.savedAt = clockNow()
-  await writeSaved($, { pet })
+  const food = foodGains
+  const love = loveGains
+  foodGains = loveGains = 0
+  await savePet($, pet, food, love)
 }
 
 /** Rereads the lifetime token count: stats-cache.json's days, then this mod's own days since. */
@@ -1182,14 +1315,7 @@ async function readTokens($: Dollar) {
 
 /** Adds a finished turn's tokens to today, and drops the days stats-cache.json now counts itself. */
 async function countTokens($: Dollar, tokens: number) {
-  const days = { ...((await readSaved($)).tokens ?? {}) }
-  if (tokens > 0) {
-    const day = dayOf(clockNow())
-    days[day] = (days[day] ?? 0) + tokens
-  }
-  for (const day of Object.keys(days)) if (day <= statsThrough) delete days[day]
-  liveDays = days
-  await writeSaved($, { tokens: days })
+  liveDays = await addTokens($, dayOf(clockNow()), tokens)
 }
 
 // what Clawd plays between turns; the band is never shorter than the tallest of them
@@ -1206,7 +1332,7 @@ const rowsOf = (name: string, size: number) => {
  * and HOLD_MS after it.
  */
 function bandRows(now: number): number {
-  const size = sizeOf()
+  const size = drawingSize()
   // a picture: its box, and a row above for the hop
   if (hdOn()) return picRows(size) + 1
   // resting animations, and walking with the two rows a hop over the caption takes
@@ -1284,19 +1410,21 @@ function refused($: Dollar, why: string) {
     $.clock.after(/blit again/i.test(why) ? 500 : 3_000, () => $.ui.invalidate('ui.render'))
     return
   }
-  hd = false // Clawd left out for now (never blocks)
+  hd = false
   if (/bg worker/i.test(why)) {
+    background = true
     // the session is in the background (the agents view): pictures come back the moment it returns,
     // so look again every couple of seconds, without counting this against the terminal
     hdRetryAt = clockNow() + 2_000
     $.ui.invalidate('ui.render')
     return
   }
+  background = false
   hdRefusals += 1
   // never for good: a terminal that refused at start (a new or resumed session) often takes pictures
   // a little later, so try again after a minute, then every few minutes, with no /pet hd needed
   hdRetryAt = clockNow() + (hdRefusals < HD_TRIES ? 60_000 : HD_RETRY_LATER_MS)
-  $.ui.log(`clawd-pet: pictures refused (${why}); Clawd hidden, trying pictures again soon`)
+  $.ui.log(`clawd-pet: pictures refused (${why}); using blocks, trying pictures again soon`)
   $.ui.invalidate('ui.render')
 }
 
@@ -1325,20 +1453,24 @@ function tick($: Dollar) {
   const key = `${playing}:${anim(spriteOf(playing)).same[f]}:${Math.round(x)}:${flip}:${band.cols}:${lift}`
   if (key === lastPaint) return
   lastPaint = key
-  if (hdOn()) {
+  if (band.image) {
     // the picture moves by a redraw (a step along, a hop), and changes frames by a blit
     if (Math.round(x) !== band.x || hopRows(lift) !== band.hop) {
       $.ui.invalidate('ui.render')
       return
     }
-    const pic = picture($.plugin.root, spriteOf(playing), f, sizeOf(), flip)
-    void $.ui.blit({ requestId: band.requestId, key: picKey(sizeOf()), source: pic.source }).then(
+    const pic = picture($.plugin.root, spriteOf(playing), f, drawingSize(), flip)
+    void $.ui.blit({ requestId: band.requestId, key: picKey(drawingSize()), source: pic.source }).then(
       r => ('deny' in r && r.deny ? refused($, r.deny) : (hdRefusals = 0)),
       err => refused($, String((err as Error)?.message ?? err)), // a refusal may come as a rejection
     )
     return
   }
-  // no blocks, ever: without pictures Clawd is simply not drawn (the caption stays)
+  if (!background) {
+    const columns = band.cols - band.laneLeft
+    const cells = scene(sub(spriteOf(playing), drawingSize()), f, columns, band.rows, Math.round(x) - band.laneLeft, flip)
+    void $.ui.blit({ requestId: band.requestId, key: RASTER_KEY, columns, rows: band.rows, cells }).catch(() => {})
+  }
 }
 
 /** "2m" or "1h 5m": how long the turn has run, once it has run long. */
@@ -1361,7 +1493,7 @@ const badge = () => `Lv.${levelNow()} ${titleOf(levelNow())}`
 const captionText = () => `${nameOf()} ${badge()} · ${captionNow()}`
 
 const short = (text: string, n = 28) => (text.length > n ? `${text.slice(0, n - 1)}…` : text)
-const base = (path: string) => path.split('/').filter(Boolean).pop() ?? path
+const base = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path
 
 /** A few words on what a tool call does, from its input. */
 function describe(tool: string, input: Record<string, unknown>): string {
@@ -1407,24 +1539,26 @@ function say($: Dollar, text: string, color = '#d97757', ms = 3000) {
 }
 
 const HELP = [
-  '/pet                          show or hide (hidden only until the session ends)',
-  '/pet feed | pat               feed | pat',
-  '/pet size 6                   any size 4-40 (body width in columns); /pet bigger | smaller',
-  '/pet come | run | stay | roam come here | run a lap | stay put | wander again',
-  `/pet ${Object.keys(TRICKS).join(' | ')}   (some learned at higher levels)`,
-  `/pet hat ${Object.keys(HATS).join(' | ')} | off`,
-  '/pet name Yanbaby             rename',
-  '/pet sound on | off           little chiptune sounds for its reactions (off by default)',
-  '/pet stats                    level, title, hunger, mood, moves learned',
+  '/clawd-pet                          show or hide (hidden only until the session ends)',
+  '/clawd-pet feed | pat               feed | pat',
+  '/clawd-pet size 6                   any size 4-40 (body width in columns); /clawd-pet bigger | smaller',
+  '/clawd-pet come | run | stay | roam come here | run a lap | stay put | wander again',
+  `/clawd-pet ${Object.keys(TRICKS).join(' | ')}   (some learned at higher levels)`,
+  `/clawd-pet hat ${Object.keys(HATS).join(' | ')} | off`,
+  '/clawd-pet name Yanbaby             rename',
+  '/clawd-pet sound on | off           little chiptune sounds for its reactions (off by default)',
+  '/clawd-pet hd | pixel               pictures with automatic fallback | blocks',
+  '/clawd-pet stats                    level, title, hunger, mood, moves learned',
+  'The shorter pet command is an optional alias when its name is available.',
   'click Clawd to pat it; click it a lot and it gets dizzy',
 ].join('\n')
 
-/** Runs a /pet subcommand and answers with the line to show. */
+/** Runs a /clawd-pet subcommand and answers with the line to show. */
 async function command($: Dollar, raw: string): Promise<string> {
-  // forgive copied placeholders: /pet size <4> and /pet name <Bob> mean 4 and Bob
+  // forgive copied placeholders: /clawd-pet size <4> and /clawd-pet name <Bob> mean 4 and Bob
   const cleaned = raw.replace(/[<>"'“”「」]/g, ' ').trim()
   const [first = '', ...rest] = cleaned.split(/\s+/)
-  const bare = /^\d+(\.\d+)?$/.test(first) // /pet 6 is /pet size 6
+  const bare = /^\d+(\.\d+)?$/.test(first) // /clawd-pet 6 is /clawd-pet size 6
   const head = bare ? 'size' : first
   const verb = head.toLowerCase()
   const arg = bare ? first : rest.join(' ')
@@ -1433,7 +1567,7 @@ async function command($: Dollar, raw: string): Promise<string> {
     pet.hidden = !pet.hidden
     await save($)
     $.ui.invalidate('ui.render')
-    return pet.hidden ? `${nameOf()} is hiding. /pet brings it back.` : `${nameOf()} is back! /pet help for tricks.`
+    return pet.hidden ? `${nameOf()} is hiding. /clawd-pet brings it back.` : `${nameOf()} is back! /clawd-pet help for tricks.`
   }
   if (verb === 'help') return HELP
   if (verb === 'hide' || verb === 'show') {
@@ -1454,7 +1588,7 @@ async function command($: Dollar, raw: string): Promise<string> {
       : verb === 'big' ? 18
       : verb === 'small' ? SIZE_DEFAULT
       : Number(arg.match(/\d+(\.\d+)?/)?.[0] ?? NaN)
-    if (!Number.isFinite(want)) return `Size is ${now}. Try /pet size 6 (any number ${SIZE_MIN}-${SIZE_MAX}, the body's width in columns).`
+    if (!Number.isFinite(want)) return `Size is ${now}. Try /clawd-pet size 6 (any number ${SIZE_MIN}-${SIZE_MAX}, the body's width in columns).`
     pet.size = Math.max(SIZE_MIN, Math.min(SIZE_MAX, Math.round(want)))
     x = Math.max(minX, Math.min(x, maxX()))
     plan = []
@@ -1468,7 +1602,7 @@ async function command($: Dollar, raw: string): Promise<string> {
       react($, 'facepalm')
       say($, "I'm full!", '#efb154')
     } else {
-      pet.food = clamp(pet.food + 25)
+      addFood(25)
       react($, 'startHop', 2)
       say($, 'yum!', '#e8495c')
     }
@@ -1476,7 +1610,7 @@ async function command($: Dollar, raw: string): Promise<string> {
     return `${nameOf()} food ${bar(pet.food)}`
   }
   if (verb === 'pat') {
-    pet.love = clamp(pet.love + 15)
+    addLove(15)
     react($, pet.love >= 100 ? 'danceOnce' : 'wave')
     say($, pet.love >= 100 ? 'love you!' : 'hehe~', '#e8495c')
     await save($)
@@ -1501,10 +1635,10 @@ async function command($: Dollar, raw: string): Promise<string> {
     plan = []
     if (step.to !== undefined) step = { clip: 'stand', until: 0 }
     await save($)
-    return pet.still ? `${nameOf()} stays put. /pet roam to let it wander.` : `${nameOf()} is wandering again.`
+    return pet.still ? `${nameOf()} stays put. /clawd-pet roam to let it wander.` : `${nameOf()} is wandering again.`
   }
   if (verb === 'name') {
-    if (!arg) return `Its name is ${nameOf()}. Try /pet name Yanbaby`
+    if (!arg) return `Its name is ${nameOf()}. Try /clawd-pet name Yanbaby`
     pet.name = arg.slice(0, 12)
     await save($)
     react($, 'wave')
@@ -1514,7 +1648,7 @@ async function command($: Dollar, raw: string): Promise<string> {
   if (verb === 'hat' || verb === 'hats') {
     const which = arg.toLowerCase().replace(/[^a-z]/g, '')
     const all = Object.keys(HATS)
-    if (!which) return `${nameOf()} wears ${hatOn() ? `a ${HATS[hatOn()!]!.name}` : 'no hat'}. /pet hat ${all.join(' | ')} | off`
+    if (!which) return `${nameOf()} wears ${hatOn() ? `a ${HATS[hatOn()!]!.name}` : 'no hat'}. /clawd-pet hat ${all.join(' | ')} | off`
     if (/^(off|none|no|remove)$/.test(which)) {
       changeHat(undefined)
       await save($)
@@ -1530,18 +1664,20 @@ async function command($: Dollar, raw: string): Promise<string> {
     return `${nameOf()} put on the ${HATS[hat]!.name}.`
   }
   if (verb === 'hd' || verb === 'pixel') {
-    // no more blocks by choice: this only tries pictures again after a terminal could not show one
-    hd = true
+    pet.hd = verb === 'hd'
+    hd = pet.hd
+    background = false
     hdRefusals = 0
     hdRetryAt = 0
+    await save($)
     $.ui.invalidate('ui.render')
-    return `${nameOf()} is always drawn pixel for pixel (Ghostty, kitty, iTerm2…); blocks only where the terminal cannot show pictures.`
+    return hd ? `${nameOf()} uses pictures where supported, with blocks as a fallback.` : `${nameOf()} uses blocks. /clawd-pet hd tries pictures again.`
   }
   if (verb === 'sound' || verb === 'mute') {
     pet.sound = verb === 'mute' ? false : /^(off|0|no|false)$/i.test(arg) ? false : /^(on|1|yes|true)$/i.test(arg) ? true : !pet.sound
     await save($)
     if (pet.sound) react($, 'wave')
-    return pet.sound ? `${nameOf()} makes little sounds now. /pet sound off to mute.` : `${nameOf()} is quiet.`
+    return pet.sound ? `${nameOf()} makes little sounds now. /clawd-pet sound off to mute.` : `${nameOf()} is quiet.`
   }
   if (verb === 'stats') {
     const level = levelNow()
@@ -1553,7 +1689,7 @@ async function command($: Dollar, raw: string): Promise<string> {
       `${nameOf()}  Lv.${level} ${titleOf(level)} (${yi(tokensTotal())} tokens · Lv.${level + 1} at ${yi((level + 1) * TOKENS_PER_LEVEL)})`,
       `food ${bar(pet.food)} ${Math.round(pet.food)}%`,
       `mood ${bar(pet.love)} ${Math.round(pet.love)}%`,
-      `size ${sizeOf()} · ${hdOn() ? 'pixel-perfect' : 'hidden (this terminal shows no pictures)'} · sound ${pet.sound ? 'on' : 'off'}`,
+      `size ${sizeOf()} · ${hdOn() ? 'pixel-perfect' : background ? 'hidden (background session)' : 'blocks'} · sound ${pet.sound ? 'on' : 'off'}`,
       `moves: ${known}/${total} learned${at ? ` · Lv.${at} brings ${next.filter(([lv]) => lv === at).map(([, , name]) => name).join(', ')}` : ' · all of them!'}`,
     ].join('\n')
   }
@@ -1565,7 +1701,7 @@ async function command($: Dollar, raw: string): Promise<string> {
   if (trick) {
     react($, trick[0], trick[1])
     say($, trick[2], '#e8495c', Math.min(6000, trick[1] * clipMs(trick[0])))
-    pet.love = clamp(pet.love + 2)
+    addLove(2)
     return `${nameOf()}: ${trick[2]}`
   }
   return `${nameOf()} doesn't know "${head}".\n${HELP}`
@@ -1584,30 +1720,46 @@ export const register: Register = on => {
     }
     // every session opens with Clawd out: /pet hides it for this session only
     pet.hidden = false
-    // once: the xp Clawd earned as the inline dev mod, whose store this install cannot read
-    if (!pet.merged) {
-      pet.xp += INLINE_XP
-      pet.name = nameOf()
-      pet.merged = true
-      await save($)
-    }
-    delete pet.hd // the old blocks-or-pictures choice: pictures always now
+    loadedPet(pet)
     // a new or resumed session starts from pictures, whatever an earlier one fell back to
-    hd = true
+    hd = pet.hd !== false
+    background = false
     hdRefusals = 0
     hdRetryAt = 0
     // pictures need the frames made ahead; without them, blocks
     if (!(await $.fs.exists(`${$.plugin.root}/frames/Swaying/0.png`).catch(() => false))) hd = false
     await readTokens($)
-    await syncHosts($)
     await catchUp($)
+    await syncHosts($)
     void checkNight($, clockNow())
-    await $.command.register({ name: 'pet', description: 'Clawd the pet: /pet help for everything (feed, pat, size, dance…)' })
     kick($)
+    await $.command.register({ name: 'clawd-pet', description: 'Clawd the pet: /clawd-pet help for commands.' }).catch(err => $.ui.log(`clawd-pet: command unavailable: ${err}`))
+    const commands = await $.command.list().catch(() => [])
+    petAlias = !commands.some(c => c.name === 'pet' && c.plugin !== $.plugin.name)
+    if (petAlias) await $.command.register({ name: 'pet', description: 'Clawd the pet: /pet help for everything (feed, pat, size, dance…)' }).catch(() => { petAlias = false })
     return next(e)
   })
 
-  on('command.run', { command: 'pet' }, async ($, e) => {
+  on('classic.SessionStart', { source: ['clear', 'resume', 'fork'] }, async ($, e, next) => {
+    const result = await next(e)
+    await catchUp($)
+    await syncHosts($)
+    $.ui.invalidate('ui.render')
+    return result
+  })
+
+  on('command.register', { name: 'pet' }, async ($, e, next) => {
+    const result = await next(e)
+    if ('value' in result && next.origin.plugin !== $.plugin.name) petAlias = false
+    return result
+  })
+
+  on('command.run', { command: ['pet', 'clawd-pet'] }, async ($, e, next) => {
+    if (e.command === 'pet') {
+      if (!petAlias) return next(e)
+      const owner = (await $.command.list().catch(() => [])).find(c => c.name === 'pet')
+      if (owner && owner.plugin !== $.plugin.name) return next(e)
+    }
     await syncClock($)
     const text = await command($, e.args)
     await syncHosts($) // hide and show flip who draws the readout
@@ -1632,7 +1784,7 @@ export const register: Register = on => {
     await syncClock($)
     working = true
     workMood = TOOL_MOOD[e.tool] ?? 'work'
-    const input = ((e as { input?: unknown }).input ?? {}) as Record<string, unknown>
+    const input = e as unknown as Record<string, unknown>
     doing = describe(e.tool, input)
     lastActive = clockNow()
     kick($)
@@ -1648,7 +1800,7 @@ export const register: Register = on => {
       // a passing test run is a treat
       const cmd = typeof input.command === 'string' ? input.command : ''
       if (e.tool === 'Bash' && /\b(test|tests|jest|vitest|pytest|mocha|rspec|cargo test|go test)\b/.test(cmd)) {
-        pet.food = clamp(pet.food + 5)
+        addFood(5)
         react($, 'excitedPick')
         say($, 'tests pass! yum', '#77c3ab')
       }
@@ -1666,7 +1818,7 @@ export const register: Register = on => {
     doing = ''
     if (clockNow() - statsReadAt >= STATS_REFRESH_MS) await readTokens($)
     await countTokens($, turnTokens(e.usage))
-    pet.food = clamp(pet.food + 2) // a snack for every finished turn
+    addFood(2) // a snack for every finished turn
     const level = levelNow()
     if (level > before) {
       // a level up: the newest move it learned, and a toast with all it learned
@@ -1688,11 +1840,11 @@ export const register: Register = on => {
     await syncClock($)
     const at = (e.data as { x?: number } | null)?.x ?? -1
     const body = Math.round(x)
-    if (at < body - 1 || at > body + sizeOf()) return {}
+    if (at < body - 1 || at > body + drawingSize()) return {}
     const now = clockNow()
     lastTap = now - lastTap.at < 1500 ? { at: now, count: lastTap.count + 1 } : { at: now, count: 1 }
     lastActive = now
-    pet.love = clamp(pet.love + 3)
+    addLove(3)
     if (lastTap.count >= 4) {
       react($, or('Dizzy', 'startHop'))
       say($, knows('Dizzy') ? 'whoa… dizzy' : 'hey hey hey!', '#efb154')
@@ -1718,12 +1870,23 @@ export const register: Register = on => {
   // the other mods' state, followed as they write it: no reads while drawing
   on('state.set', async ($, e, next) => {
     const r = await next(e)
+    if (!('value' in r) || !r.value.isSet) return r
     const w = e as unknown as { plugin: string; key: string; value: unknown }
-    if (w.plugin !== 'clawd-pet' && follow(w.plugin, w.key, w.value)) {
+    if (w.plugin !== 'clawd-pet' && follow(w.plugin, w.key, await readFollowed($, w.plugin, w.key))) {
+      if (w.plugin === 'token-weather' && w.key === 'line') await syncHosts($)
       $.ui.invalidate('ui.render')
       kick($)
     }
     return r
+  })
+
+  // Older custom token-weather versions query the inline mod's former name. Bridge only
+  // an unset legacy value; an actual claude-pet mod keeps ownership of its own hosts.
+  on('state.get', { plugin: 'claude-pet', key: 'hosts' }, async ($, e, next) => {
+    const result = await next(e)
+    if (!('value' in result) || result.value.value !== undefined) return result
+    const hosted = await $.state.get(HOSTS)
+    return { value: hosted }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -1765,6 +1928,9 @@ export const register: Register = on => {
           })()
         : null
     if (e.surface === 'desktop') {
+      band = null
+      renderSize = null
+      hostingRoom($, true)
       // the desktop: one compact line, the readout and Clawd's caption fixed on the left, then a lane
       // where Clawd strolls. Clawd floats in the lane (absolute), drawn larger than the lane is tall
       // and centred on it, so neither its size nor its walk moves the text or grows the band.
@@ -1840,18 +2006,23 @@ export const register: Register = on => {
     // the terminal, laid out like the desktop: a text block at the band's bottom left (hud-pane's rows
     // joined into one line, then the readout and Clawd's caption), and Clawd strolling in a lane just
     // right of it, its feet on the block's last line. The band keeps its size; other bands sit below.
-    const cols = Math.max(20, Math.min(512, e.props.bodyColumns))
-    const maxRows = e.props.maxRows - 1
+    desktop = null
+    const cols = Math.max(1, Math.min(512, e.props.bodyColumns))
+    const maxRows = Math.max(0, e.props.maxRows - terminalRows(below, cols))
+    hostingRoom($, maxRows > 0)
+    if (maxRows === 0) { band = null; return below }
     const text = captionText()
     const segWidth = (segments: Segment[]) => segments.reduce((w, seg) => w + widthOf(seg.children), 0)
     const readoutSegs = sideCache ? (fitSide(sideCache, cols).width ? side.segments : sideCache.compact) : []
     const captionWidth = (readoutSegs.length ? segWidth(readoutSegs) + widthOf(SIDE_SEP) : 0) + widthOf(text)
     const hudWidth = hudRows.reduce((w, row, i) => w + (i > 0 ? 3 : 0) + segWidth(row), 0)
-    const blockWidth = Math.min(Math.max(captionWidth, hudWidth), Math.max(10, cols - sizeOf() - 4))
+    const blockWidth = Math.min(Math.max(captionWidth, hudWidth), Math.max(1, cols - Math.min(2 * sizeOf(), Math.floor(cols / 3)) - 3))
+    renderSize = Math.max(1, Math.min(sizeOf(), Math.floor((cols - blockWidth - 3) / 2), Math.floor(Math.max(1, maxRows - 1) * 48 / PIC_PX)))
+    const laneLeft = Math.min(cols - 1, 1 + blockWidth + 2)
     // no caption in Clawd's lane, so nothing to hop over
     cap = { left: 0, width: 0, text }
-    minX = Math.min(1 + blockWidth + 2, Math.max(0, cols - sizeOf() - 1))
-    rangeRight = Math.min(cols - sizeOf() - 1, minX + DESKTOP_RANGE)
+    minX = laneLeft - (hdOn() ? picLeft(drawingSize()) : 0)
+    rangeRight = Math.max(minX, Math.min(cols - (hdOn() ? 2 * drawingSize() + picLeft(drawingSize()) : drawingSize()), minX + DESKTOP_RANGE))
     const fullRows = bandRows(now)
     const rows = Math.min(fullRows, maxRows)
     const { Box, Text, Raster, Image, Client } = $.ui.resolve(e)
@@ -1865,7 +2036,7 @@ export const register: Register = on => {
     ]
     const block = (
       <Box flexDirection="column" width={blockWidth}>
-        {hudRows.length > 0 && (
+        {hudRows.length > 0 && rows > 1 && (
           <Text wrap="truncate">
             {hudRows.flatMap((row, i) => (i > 0 ? [<Text dimColor> · </Text>, ...runsOf(row)] : runsOf(row)))}
           </Text>
@@ -1874,6 +2045,7 @@ export const register: Register = on => {
           {readoutSegs.length > 0 && runsOf(readoutSegs)}
           {readoutSegs.length > 0 && <Text dimColor>{SIDE_SEP}</Text>}
           {own}
+          {rows < 2 && hudRows.length > 0 && <Text dimColor> · {hudRows.flatMap(row => runsOf(row))}</Text>}
         </Text>
       </Box>
     )
@@ -1887,20 +2059,25 @@ export const register: Register = on => {
         </Box>
       )
     }
-    band = { requestId: e.requestId, cols, rows, maxRows, x: Math.round(x), hop: hopRows(liftAt(Math.round(x))) }
+    band = { requestId: e.requestId, cols, rows, maxRows, x: Math.round(x), hop: hopRows(liftAt(Math.round(x))), laneLeft, image: hdOn() && cols - laneLeft >= 2 * drawingSize() }
     const f = frameNow(now)
     const flip = facing < 0
     const lift = liftAt(Math.round(x))
     lastPaint = `${playing}:${anim(spriteOf(playing)).same[f]}:${Math.round(x)}:${flip}:${cols}:${lift}`
-    const pic = hdOn() ? picture($.plugin.root, spriteOf(playing), f, sizeOf(), flip) : null
+    const pic = band.image ? picture($.plugin.root, spriteOf(playing), f, drawingSize(), flip) : null
+    const rasterCols = cols - laneLeft
     return (
       <Box flexDirection="column">
         <Box width={cols} height={rows}>
           {pic ? (
-            <Box position="absolute" bottom={hopRows(lift)} left={Math.max(minX, Math.min(cols - pic.columns, Math.round(x) + pic.left))}>
-              <Image key={picKey(sizeOf())} source={pic.source} columns={pic.columns} rows={pic.rows} alt=" " />
+            <Box position="absolute" bottom={0} left={Math.round(x) + pic.left}>
+              <Image key={picKey(drawingSize())} source={pic.source} columns={pic.columns} rows={pic.rows} alt=" " />
             </Box>
-          ) : null /* no blocks, ever: where pictures cannot show, Clawd is left out */}
+          ) : !background && (
+            <Box position="absolute" bottom={0} left={laneLeft}>
+              <Raster key={RASTER_KEY} columns={rasterCols} rows={rows} cells={scene(sub(spriteOf(playing), drawingSize()), f, rasterCols, rows, Math.round(x) - laneLeft, flip)} />
+            </Box>
+          )}
           <Box position="absolute" top={0} left={0}>
             <Client key="touch" module="./touch.tsx" width={cols} height={rows} />
           </Box>
