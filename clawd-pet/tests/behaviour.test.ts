@@ -26,9 +26,9 @@ const caption = async ($: Engine) => {
 test('the caption says what Claude is doing', async ($, on) => {
   engine(on)
   await $.prompt.submit({ text: 'hi' } as never)
-  await $.tool.call({ tool: 'Edit', input: { file_path: '/repo/src/register.tsx', old_string: 'a', new_string: 'b' } } as never)
+  await $.tool.call({ tool: 'Edit', file_path: '/repo/src/register.tsx', old_string: 'a', new_string: 'b' } as never)
   expect(await caption($)).toContain('editing register.tsx')
-  await $.tool.call({ tool: 'Bash', input: { command: 'ls -la', description: 'List files' } } as never)
+  await $.tool.call({ tool: 'Bash', command: 'ls -la', description: 'List files' } as never)
   expect(await caption($)).toContain('running List files')
 })
 

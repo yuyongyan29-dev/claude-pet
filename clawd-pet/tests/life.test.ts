@@ -39,7 +39,9 @@ function world(on: On, opts: { refuse?: (n: number) => string | undefined; hour?
     return { value: undefined } as never
   })
   on('session.start', async (_$: any, e: any) => ({ cwd: e.cwd }) as never)
-  on('command.register', async () => ({ value: { command: 'pet' } }) as never)
+  on('command.register', async (_$, e) => ({ value: { command: e.name } }) as never)
+  on('command.list', async () => ({ value: [] }) as never)
+  on('fs.list', async () => ({ value: [] }) as never)
   on('process.run', async () => ({ value: { exitCode: 0, stdout: `${opts.hour ?? '14'}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as never)
   on('ui.render', { component: 'AbovePrompt' }, async () => ({ type: 'Box', props: {}, children: [] }) as never)
   on('ui.blit', async (_$: any, e: any) => {
@@ -137,7 +139,7 @@ test('a terminal not asked about pictures yet never gets blocks', async ($, on) 
   await ui.unmount()
 })
 
-test('a terminal without pictures never gets blocks: Clawd is left out, and pictures are tried again later', async ($, on) => {
+test('a terminal without pictures draws blocks and tries pictures again later', async ($, on) => {
   const { clock, blits } = world(on, { refuse: () => 'the Image draws its alt here: the terminal draws no placeholder images' })
   await boot($)
   const ui = await $.ui.mount(band(120))
@@ -146,9 +148,9 @@ test('a terminal without pictures never gets blocks: Clawd is left out, and pict
     await clock.advance(1_000)
     rasters += (await ui.findAll({ type: 'Raster' })).length
   }
-  expect(rasters).toBe(0)
-  expect(blits.filter(b => b.cells).length).toBe(0)
-  expect(await ui.find({ type: 'Image' })).toBeFalsy() // no Clawd at all meanwhile
+  expect(rasters).toBeGreaterThan(0)
+  expect(blits.filter(b => b.cells).length).toBeGreaterThan(0)
+  expect(await ui.find({ type: 'Image' })).toBeFalsy() // the fallback draws meanwhile
   const pictures = () => blits.filter(b => b.source).length
   const before = pictures()
   await clock.advance(65_000)
@@ -163,8 +165,8 @@ test('pictures that keep failing at start come back by themselves, no /pet hd ne
   await boot($)
   const ui = await $.ui.mount(band(120))
   for (let i = 0; i < 20; i++) await clock.advance(30_000)
-  expect(await ui.find({ type: 'Image' })).toBeFalsy() // no Clawd meanwhile, never blocks
-  expect((await ui.findAll({ type: 'Raster' })).length).toBe(0)
+  expect(await ui.find({ type: 'Image' })).toBeFalsy()
+  expect(await ui.find({ type: 'Raster' })).toBeTruthy()
   refusing = false
   for (let i = 0; i < 24; i++) await clock.advance(30_000)
   expect(await ui.find({ type: 'Image' })).toBeTruthy() // a picture again
@@ -242,7 +244,7 @@ test('Clawd waves when Claude waits on a permission prompt', async ($, on) => {
   await ($ as any).classic.Notification({ message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' })
   await clock.advance(300)
   expect(await caption(ui)).toMatch(/need your OK|waiting for you/)
-  await $.tool.call({ tool: 'Bash', input: { command: 'ls' } } as never)
+  await $.tool.call({ tool: 'Bash', command: 'ls' } as never)
   await clock.advance(4_000)
   expect(await caption(ui)).not.toMatch(/waiting for you/)
   await ui.unmount()
@@ -332,10 +334,10 @@ test('at work Clawd stays lively: many moves across a busy turn', async ($, on) 
   await $.prompt.submit({ text: 'hi' } as never)
   const ui = await $.ui.mount(band(160, 'terminal', true))
   const calls = [
-    { tool: 'Read', input: { file_path: '/repo/a.ts' } },
-    { tool: 'Edit', input: { file_path: '/repo/a.ts', old_string: 'a', new_string: 'b' } },
-    { tool: 'Bash', input: { command: 'npm run build', description: 'Build' } },
-    { tool: 'Grep', input: { pattern: 'foo' } },
+    { tool: 'Read', file_path: '/repo/a.ts' },
+    { tool: 'Edit', file_path: '/repo/a.ts', old_string: 'a', new_string: 'b' },
+    { tool: 'Bash', command: 'npm run build', description: 'Build' },
+    { tool: 'Grep', pattern: 'foo' },
   ]
   for (let i = 0; i < 24; i++) {
     await $.tool.call(calls[i % calls.length] as never)
@@ -379,8 +381,8 @@ test('from Lv.10 Clawd shows off at work too: big moves between bouts at the des
   await $.prompt.submit({ text: 'hi' } as never)
   const ui = await $.ui.mount(band(160, 'terminal', true))
   const calls = [
-    { tool: 'Edit', input: { file_path: '/repo/a.ts', old_string: 'a', new_string: 'b' } },
-    { tool: 'Bash', input: { command: 'npm run build', description: 'Build' } },
+    { tool: 'Edit', file_path: '/repo/a.ts', old_string: 'a', new_string: 'b' },
+    { tool: 'Bash', command: 'npm run build', description: 'Build' },
   ]
   for (let i = 0; i < 36; i++) {
     await $.tool.call(calls[i % calls.length] as never)
@@ -415,14 +417,14 @@ test('/pet hat puts a hat on: the pictures come from frames-hat, and off takes i
   await ui.unmount()
 })
 
-test('with a hat on, a terminal without pictures still gets no blocks', async ($, on) => {
+test('with a hat on, a terminal without pictures draws the hat in blocks', async ($, on) => {
   const { clock, blits } = world(on, { tokens: 0, refuse: () => 'no pictures here' })
   await boot($)
   const ui = await $.ui.mount(band(160))
   await pet($, 'hat crown')
   await clock.advance(6_000)
-  expect(blits.filter(b => b.cells).length).toBe(0)
-  expect((await ui.findAll({ type: 'Raster' })).length).toBe(0)
+  expect(blits.filter(b => b.cells).length).toBeGreaterThan(0)
+  expect(await ui.find({ type: 'Raster' })).toBeTruthy()
   await ui.unmount()
 })
 
@@ -432,7 +434,9 @@ test('back from the background (the agents view), Clawd is a picture again withi
   await boot($)
   const ui = await $.ui.mount(band(120))
   await clock.advance(10_000)
-  expect((await pet($, 'stats')).text ?? '').toContain('hidden') // left out meanwhile, never blocks
+  // An automatic retry can be in flight at this instant; a background session never draws blocks.
+  expect(blits.length).toBeGreaterThan(0)
+  expect(await ui.find({ type: 'Raster' })).toBeUndefined()
   away = false
   await clock.advance(5_000)
   expect(await ui.find({ type: 'Image' })).toBeTruthy()

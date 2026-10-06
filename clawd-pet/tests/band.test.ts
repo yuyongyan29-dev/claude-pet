@@ -44,7 +44,7 @@ test('a new size is a new picture, as big as the size asks', async ($, on) => {
   const BIG = { plugin: 'clawd-pet', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 30, bodyColumns: 160, scroll: { offset: 0, bodyRows: 30 }, view: {} } } as const
   const sizes: [unknown, unknown][] = []
   for (const size of [6, 10]) {
-    await $.command.run({ command: 'pet', args: `size ${size}` } as never)
+    await $.command.run({ command: 'clawd-pet', args: `size ${size}` } as never)
     const ui = await $.ui.mount(BIG as never)
     const image = await ui.find({ type: 'Image' })
     sizes.push([image?.props.columns, image?.key ?? image?.props.key])

@@ -1,7 +1,7 @@
 {
   "name": "clawd-pet",
-  "version": "0.29.3",
-  "description": "Clawd strolls above your prompt using the official clawd-quest pixel animations; reacts to what Claude is doing. /pet help for tricks.",
+  "version": "0.29.4",
+  "description": "Clawd strolls above your prompt using the official clawd-quest pixel animations; reacts to what Claude is doing. /clawd-pet help for tricks; /pet is an optional alias.",
   "author": {
     "name": "yanyan"
   },
